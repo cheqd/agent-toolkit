@@ -1,4 +1,4 @@
-# cheqd agent trust
+# cheqd agent toolkit
 
 > ## ⚠️ DRAFT — scaffolding only
 >
@@ -14,12 +14,12 @@ DID-anchored identity, delegation and per-request proof for agentic protocols.
 
 | Package | Responsibility | Status |
 |---|---|---|
-| [`@cheqd/agent-trust`](./packages/trust-core) | DID resolution, reciprocal `did:web` ↔ `did:cheqd` linkage, DID-Linked Resource policy, credential status, key resolution | Not started |
-| [`@cheqd/a2a-trust`](./packages/a2a) | A2A binding: client interceptor, server executor gate, canonical request shape | Not started |
-| [`@cheqd/ap2-trust`](./packages/ap2) | AP2 binding: `cnf` key continuity, mandate verification | Not started |
+| [`@cheqd/agent-identity`](./packages/core) | DID resolution, reciprocal `did:web` ↔ `did:cheqd` linkage, DID-Linked Resource policy, credential status, key resolution | Not started |
+| [`@cheqd/agent-identity-a2a`](./packages/a2a) | A2A binding: client interceptor, server executor gate, canonical request shape | Not started |
+| [`@cheqd/agent-identity-ap2`](./packages/ap2) | AP2 binding: `cnf` key continuity, mandate verification | Not started |
 | [`conformance/`](./conformance) | Shared vectors | Not started |
 
-`a2a` and `ap2` both depend on `trust-core` and not on each other, so an AP2 consumer never installs the A2A SDK.
+The two bindings both depend on the core and not on each other, so an AP2 consumer never installs the A2A SDK.
 
 ## What this builds on
 
@@ -32,7 +32,7 @@ Neither would be forked. Both would be pinned.
 
 ## Related
 
-- [`cheqd/a2a-ext-cheqd-trust`](https://github.com/cheqd/a2a-ext-cheqd-trust) — the A2A extension specification and reference sample, kept separate so it stays contributable to the A2A project without carrying AP2 work or build tooling.
+- [`cheqd/agent-identity-a2a`](https://github.com/cheqd/agent-identity-a2a) — the A2A extension specification and reference sample, kept separate so it stays contributable to the A2A project without carrying AP2 work or build tooling.
 
 ## Development
 

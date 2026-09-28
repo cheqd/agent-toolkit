@@ -1,4 +1,4 @@
-# @cheqd/ap2-trust
+# @cheqd/agent-identity-ap2
 
 > **DRAFT — not implemented.** This package is an empty boundary. There is no functionality and the public API is not designed. Do not depend on it.
 

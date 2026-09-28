@@ -1,5 +1,5 @@
 /**
- * @cheqd/agent-trust — shared trust core: DID resolution, reciprocal did:web <-> did:cheqd linkage, DID-Linked Resource policy, credential status and key resolution.
+ * @cheqd/agent-identity — Shared identity core: DID resolution, reciprocal did:web <-> did:cheqd linkage, DID-Linked Resource policy, credential status and key resolution.
  *
  * DRAFT — scaffolding only. No functionality is implemented, and the public
  * API is not designed. Do not depend on this package.

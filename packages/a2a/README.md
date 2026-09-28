@@ -1,4 +1,4 @@
-# @cheqd/a2a-trust
+# @cheqd/agent-identity-a2a
 
 > **DRAFT — not implemented.** This package is an empty boundary. There is no functionality and the public API is not designed. Do not depend on it.
 

@@ -1,5 +1,5 @@
 /**
- * @cheqd/ap2-trust — AP2 binding: cnf key continuity and mandate verification.
+ * @cheqd/agent-identity-ap2 — AP2 binding: cnf key continuity and mandate verification.
  *
  * DRAFT — scaffolding only. No functionality is implemented, and the public
  * API is not designed. Do not depend on this package.

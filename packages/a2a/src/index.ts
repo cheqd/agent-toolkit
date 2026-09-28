@@ -1,5 +1,5 @@
 /**
- * @cheqd/a2a-trust — A2A binding: client interceptor, server executor gate, and the canonical request shape.
+ * @cheqd/agent-identity-a2a — A2A binding: Client interceptor, server executor gate, and the canonical request shape.
  *
  * DRAFT — scaffolding only. No functionality is implemented, and the public
  * API is not designed. Do not depend on this package.

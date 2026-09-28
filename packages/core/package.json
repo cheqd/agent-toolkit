@@ -1,8 +1,8 @@
 {
-  "name": "@cheqd/agent-trust",
+  "name": "@cheqd/agent-identity",
   "version": "0.0.0",
   "private": true,
-  "description": "DRAFT — shared trust core. Nothing is implemented.",
+  "description": "DRAFT \u2014 shared identity core. Nothing is implemented.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -13,7 +13,9 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "publishConfig": {
     "access": "public"
   }

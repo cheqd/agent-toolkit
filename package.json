@@ -1,7 +1,7 @@
 {
-  "name": "@cheqd/agent-trust-workspace",
+  "name": "@cheqd/agent-toolkit-workspace",
   "private": true,
-  "description": "DRAFT — scaffolding only. Nothing is implemented.",
+  "description": "DRAFT \u2014 scaffolding only. Nothing is implemented.",
   "license": "Apache-2.0",
   "workspaces": [
     "packages/*"
