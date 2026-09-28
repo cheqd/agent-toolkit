@@ -18,11 +18,15 @@ git commit -s -m "your commit message"
 
 Commits without a sign-off will not be merged. CI checks this on every pull request.
 
-To sign off commits you have already made:
+To sign off commits you have already made, rebase onto the branch you
+are targeting:
 
 ```bash
-git rebase --signoff main
+git rebase --signoff origin/main
 ```
+
+If you are working from a fork, rebase onto that remote instead — for
+example `git rebase --signoff upstream/main`.
 
 ## Licence
 
