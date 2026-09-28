@@ -1,0 +1,8 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/trust-core" },
+    { "path": "./packages/a2a" },
+    { "path": "./packages/ap2" }
+  ]
+}

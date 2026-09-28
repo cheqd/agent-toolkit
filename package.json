@@ -1,0 +1,20 @@
+{
+  "name": "@cheqd/agent-trust-workspace",
+  "private": true,
+  "description": "DRAFT — scaffolding only. Nothing is implemented.",
+  "license": "Apache-2.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "tsc --build --clean",
+    "typecheck": "tsc --build --dry"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

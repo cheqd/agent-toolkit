@@ -1,0 +1,20 @@
+{
+  "name": "@cheqd/a2a-trust",
+  "version": "0.0.0",
+  "private": true,
+  "description": "DRAFT — A2A binding. Nothing is implemented.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  }
+}
