@@ -1,6 +1,6 @@
 # Test harnesses across related repositories — October 2026
 
-> **Research notes, not a specification.** Compiled on 5 October 2026 by reading public repositories. **Nothing here was executed.** Re-verify before relying on any detail.
+> **Research notes, not a specification.** Compiled on 5 and 6 October 2026 by reading public repositories. Section 4 records one run of the TCK; nothing else here was executed. Re-verify before relying on any detail.
 
 ## 1. Summary
 
@@ -27,10 +27,32 @@
 2. **The JS SDK's own CI does not use the current TCK.** Its `run-tck-compat.yaml` pins TCK `0.3.0.beta5`, uses `--sut-url` with `--category mandatory` and `--category capabilities`, and patches out one test with `sed`. TCK `main` (1.0.0) uses `--sut-host` and `--level`. The two CLIs differ.
 3. **The compat agent speaks v0.3.** It is built on the v1.0 SDK with a v0.3 compatibility layer, and its README says the TCK drives it unchanged in v0.3 shape. Whether it passes the 1.0.0 TCK is unknown.
 4. **The kya-os suite is pinned behind npm.** Check the vector-set hash against the version we pin before reusing it.
-5. **The TCK needs a live agent.** Our sample agent would have to be the system under test, and the TCK's agent-card-driven discovery would need to see our extension.
+5. **The TCK needs a live agent, and its extension coverage is thin.** Our sample agent would have to be the system under test. The only extension-related tests found check that the `A2A-Extensions` header is accepted on JSON-RPC and HTTP+JSON without error, using made-up `example.com` URIs. They do not test activation, `AgentCard.capabilities.extensions` or extension behaviour. The `CARD-EXT-001` and `CARD-EXT-002` requirements are about the *extended agent card*, not extensions.
 
-## 4. Not done
+## 4. TCK run
 
-- The TCK was **not run** against the a2a-js compat agent. Running it requires installing and executing third-party code.
-- The TCK requirement list was only partly read (the agent-card file).
+Run on 6 October 2026: TCK `main` at `263b9cf` (1.0.0, 1 Sep 2026) against the `a2a-js` `tck/compat-agent` at `af1b5a8` (5 Oct 2026), both cloned fresh and run on a laptop. Command: `./run_tck.py --sut-host http://localhost:41241`. Wall time 6 minutes 20 seconds.
+
+**Result: 127 passed, 43 failed, 93 skipped, 2 expected failures.** The TCK report's own summary gives 43.0% overall and 45.5% for MUST requirements.
+
+| Transport | Total | Passed | Failed | Skipped |
+|---|---|---|---|---|
+| Agent card | 10 | 9 | 1 | 0 |
+| JSON-RPC | 92 | 71 | 6 | 15 |
+| HTTP+JSON | 86 | 62 | 10 | 14 |
+| gRPC | 39 | 3 | 23 | 13 |
+
+How to read this:
+
+- **gRPC (25 of 43 failures) is a connection problem.** The agent card advertises gRPC as `http://localhost:41242`, and the TCK's gRPC client fails with `Misformatted domain name`. These failures say nothing about gRPC behaviour. They show how the TCK treats an `http://` gRPC URL, and they are not investigated further.
+- **Artifact tests (10) fail because the sample agent returns no artifacts** ("Response contains no artifacts"). This is a limit of the sample agent, which is built for the v0.3 suite.
+- **Subscribe-to-terminal-state (2) and some content-type checks (about 4) fail.** For example, the HTTP+JSON error `Content-Type` is `application/a2a+json`, and the TCK expects `application/json`.
+- **I did not triage the failures further**, and I do not know which are SUT limitations and which are TCK defects. The SDK's own CI runs the older `0.3.0.beta5` suite, so these results are not comparable with it.
+
+What it shows for our work: the TCK is easy to run against a JavaScript agent and its reports are usable, but a pass rate this low on a reference agent means the TCK cannot yet serve as our gate on its own.
+
+## 5. Not done
+
+- The TCK requirement list was only partly read (the agent-card file and an extension search).
 - The test changes between `@a2a-js/sdk` 1.2.0 and 1.3.0 were not reviewed.
+- The failures were not triaged individually, and no run was made against the `0.3.0.beta5` suite.
