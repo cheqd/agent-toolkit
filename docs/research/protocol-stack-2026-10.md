@@ -37,6 +37,8 @@ Each box is one capability. Chips show which protocols cover it: filled means th
 
 ![Agentic protocol capability map showing overlaps and gaps](./images/protocol-capability-map.png)
 
+The ratings are data in [`tools/capability-map/generate.py`](./tools/capability-map/generate.py). Edit them and regenerate rather than redrawing the image; see its [README](./tools/capability-map/README.md).
+
 Counts: 28 capabilities, of which 4 overlap, 9 have partial overlap, 2 are gaps and 13 have a single owner.
 
 | Kind | Capabilities |
