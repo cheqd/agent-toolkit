@@ -31,6 +31,20 @@ flowchart TB
     class L0 l0
 ```
 
+### Capability map with overlaps and gaps
+
+Each box is one capability. Chips show which protocols cover it: filled means the protocol owns it, outlined with ◐ means partial. Red boxes have two or more full owners (real overlap). Amber boxes have one owner plus partial coverage. Dashed boxes have no owner.
+
+![Agentic protocol capability map showing overlaps and gaps](./images/protocol-capability-map.png)
+
+Counts: 28 capabilities, of which 4 overlap, 9 have partial overlap, 2 are gaps and 13 have a single owner.
+
+| Kind | Capabilities |
+|---|---|
+| Overlap (two or more full owners) | HTTP-native payment request (x402, MPP, L402); card-rail payments (TAP, ACP, with MPP partial); agent identity credential (KYA-OS, KYAPay, Baselayer); owner and deployer verification (Baselayer, KYAPay) |
+| Partial overlap | Mandate authorisation; stablecoin settlement; holder-of-key binding; human-to-agent authority; per-request proof; replay protection; agent discovery; DID resolution; credential status and revocation |
+| Gap | Binding the decision to the payment; skill and capability attestation |
+
 ### Capability matrix
 
 ● owns the capability  ◐ partial  ○ none
