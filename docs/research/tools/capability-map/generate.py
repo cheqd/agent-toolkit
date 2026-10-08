@@ -3,7 +3,13 @@
 
 Edit ROWS below to change which protocol covers which capability, then run:
 
-    python3 generate.py [output.html]
+    python3 generate.py [output.html] [--no-cheqd] [--without PROTOCOL] [--skip-row ROW] [--title TEXT]
+
+`--without` removes a protocol's chips and drops any capability that only that
+protocol covered, so a neutral version comes from the same data.
+`--no-cheqd` is the toggle for the cheqd-free version: it is shorthand for
+`--without cheqd --skip-row "Trust anchor"`.
+`--skip-row` omits a whole row, for example `--skip-row "Trust anchor"`.
 
 Box colour is derived from the data, so it cannot drift from the chips:
   - two or more full owners (F)         -> overlap (red)
@@ -67,6 +73,32 @@ ROWS=[
      cap("Trust registry standing",[('cheqd','F')])]),
  ]),
 ]
+def _arg(flag):
+    return sys.argv[sys.argv.index(flag)+1] if flag in sys.argv else None
+NO_CHEQD='--no-cheqd' in sys.argv
+WITHOUT='cheqd' if NO_CHEQD else _arg('--without')
+TITLE=_arg('--title') or 'Agentic protocol capability map'
+SKIP_ROW='Trust anchor' if NO_CHEQD else _arg('--skip-row')
+if SKIP_ROW:
+    ROWS=[r for r in ROWS if r[0]!=SKIP_ROW]
+if WITHOUT:
+    _rows=[]
+    for rname, groups in ROWS:
+        _groups=[]
+        for gn, cs in groups:
+            _cs=[]
+            for c in cs:
+                owners=[(p,l) for p,l in c['owners'] if p!=WITHOUT]
+                if c['owners'] and not owners:
+                    continue  # only this protocol covered it
+                _cs.append(dict(c, owners=owners))
+            if _cs:
+                _groups.append((gn,_cs))
+        if _groups:
+            _rows.append((rname,_groups))
+    ROWS=_rows
+    COL.pop(WITHOUT, None)
+
 def kind(c):
     if c['gap']: return 'gap'
     full=[p for p,l in c['owners'] if l=='F']
@@ -82,7 +114,7 @@ rows=''
 for rname, groups in ROWS:
     g=''.join(f'<div class="grp"><div class="gt">{html.escape(gn)}</div><div class="caps">{"".join(box(c) for c in cs)}</div></div>' for gn,cs in groups)
     rows+=f'<div class="row"><div class="rl">{html.escape(rname)}</div><div class="groups">{g}</div></div>'
-legend=''.join(f'<span class="chip" style="--c:{COL[p]}">{p}</span>' for p in ['A2A','MCP','KYA-OS','KYAPay','AP2','x402','MPP','L402','cheqd'])+'<span class="chip" style="--c:#6b7a8f">ACP / TAP / Baselayer</span>'
+legend=''.join(f'<span class="chip" style="--c:{COL[p]}">{p}</span>' for p in ['A2A','MCP','KYA-OS','KYAPay','AP2','x402','MPP','L402','cheqd'] if p in COL)+'<span class="chip" style="--c:#6b7a8f">ACP / TAP / Baselayer</span>'
 page=f'''<!doctype html><meta charset=utf-8><style>
 body{{margin:0;padding:24px;background:#fff;font-family:Helvetica,Arial,sans-serif;color:#222;width:1560px}}
 h1{{font-size:20px;margin:0 0 4px}} .sub{{font-size:12px;color:#555;margin-bottom:14px}}
@@ -104,7 +136,7 @@ h1{{font-size:20px;margin:0 0 4px}} .sub{{font-size:12px;color:#555;margin-botto
 .leg{{margin-top:14px;font-size:11px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}}
 .k{{display:inline-block;width:14px;height:14px;border-radius:3px;margin:0 3px 0 10px;vertical-align:middle}}
 </style>
-<h1>Agentic protocol capability map</h1>
+<h1>{html.escape(TITLE)}</h1>
 <div class="sub">Which protocol owns each capability. Red = two or more full owners (overlap). Amber = one owner plus partial coverage. Dashed = gap. Filled chip = owns, outlined chip with ◐ = partial. Author's assessment, October 2026; payment-protocol details are from secondary sources.</div>
 {rows}
 <div class="leg">{legend}

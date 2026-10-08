@@ -4,10 +4,22 @@ Generates the capability map in [`../../images/protocol-capability-map.png`](../
 
 The ratings live in the `ROWS` list in `generate.py`. Edit them, regenerate and re-render. Box colour (overlap, partial overlap, gap) is computed from the ratings.
 
+## Toggle for including cheqd
+
+The same data produces two versions:
+
+| Version | Command | Image |
+|---|---|---|
+| With cheqd | `python3 generate.py out.html` | [`protocol-capability-map.png`](../../images/protocol-capability-map.png) |
+| Without cheqd | `python3 generate.py out.html --no-cheqd` | [`protocol-capability-map-neutral.png`](../../images/protocol-capability-map-neutral.png) |
+
+`--no-cheqd` removes the cheqd chips, drops the capabilities only cheqd covered, and omits the Trust anchor row. `--without PROTOCOL` and `--skip-row ROW` do the same for other protocols and rows.
+
 ## Run
 
 ```bash
-python3 generate.py capability-map.html
+python3 generate.py capability-map.html            # with cheqd
+python3 generate.py capability-map.html --no-cheqd # without cheqd
 ```
 
 The script needs only Python 3 and prints the count in each category.
@@ -22,7 +34,7 @@ Any headless Chromium works. For example, with Chrome on macOS:
   --screenshot=protocol-capability-map.png file://$PWD/capability-map.html
 ```
 
-The window size fits the current content. Change the height if you add rows.
+The window size fits the current content. Use a height of 700 instead of 830 for the `--no-cheqd` version, and change it if you add rows.
 
 ## Limits
 
