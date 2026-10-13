@@ -30,11 +30,15 @@ Any headless Chromium works. For example, with Chrome on macOS:
 
 ```bash
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless \
-  --hide-scrollbars --force-device-scale-factor=2 --window-size=1610,830 \
+  --hide-scrollbars --force-device-scale-factor=2 --window-size=1610,980 \
   --screenshot=protocol-capability-map.png file://$PWD/capability-map.html
 ```
 
-The window size fits the current content. Use a height of 700 instead of 830 for the `--no-cheqd` version, and change it if you add rows.
+The window size fits the current content. Use a height of 850 instead of 980 for the `--no-cheqd` version, and change it if you add rows. The half-circle glyph is set in DejaVu Sans; if your machine lacks it, the glyph falls back to a system font and may look smaller.
+
+## Provisional protocols
+
+Protocols in the `PROVISIONAL` set at the top of `generate.py` (currently PAP) render with dashed chips, and a box owned only by provisional protocols gets a dotted purple border. Use it for protocols whose specification is unpublished or rated from secondary sources, and remove the protocol from the set once its specification has been checked.
 
 ## Limits
 
