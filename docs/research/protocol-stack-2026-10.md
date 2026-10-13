@@ -33,7 +33,7 @@ flowchart TB
 
 ### Capability map with overlaps and gaps
 
-Each box is one capability. Chips show which protocols cover it: filled means the protocol owns it, outlined with ◐ means partial. Red boxes have two or more full owners (real overlap). Amber boxes have one owner plus partial coverage. Dashed boxes have no owner.
+Each box is one capability. Chips show which protocols cover it: filled means the protocol owns it, outlined with ◐ means partial. Red boxes have two or more full owners (real overlap). Amber boxes have one owner plus partial coverage. Dashed boxes have no owner. Dashed chips and dotted purple boxes mark provisional entries (see below).
 
 ![Agentic protocol capability map showing overlaps and gaps](./images/protocol-capability-map.png)
 
@@ -41,12 +41,17 @@ The ratings are data in [`tools/capability-map/generate.py`](./tools/capability-
 
 A version without cheqd (no cheqd chips and no Trust anchor row) is at [`images/protocol-capability-map-neutral.png`](./images/protocol-capability-map-neutral.png). Generate it with the `--no-cheqd` toggle.
 
-Counts for the full map: 28 capabilities, of which 4 overlap, 9 have partial overlap, 2 are gaps and 13 have a single owner.
+Two protocols were added to the map in October 2026, with a new Business-facing row:
+
+- **PAP (Personal Agent Protocol, Sierra and Meta) is provisional.** Its v0.1 specification is due later in October and is unpublished. It is rated from press coverage only, so every PAP rating should be revisited when the specification lands. It is rated partial on agent identity credential and human-to-agent authority, and owns access tiers (guest, read, write) and business-side visibility of agent activity.
+- **UCP (Google Universal Commerce Protocol)** is rated from Google's developer blog post, not its specification. It owns business capability discovery (a manifest the business publishes) and checkout and order semantics, and is partial on mandate authorisation and card-rail payments because it defers payment security to AP2 and processing to payment handlers.
+
+Counts for the full map: 33 capabilities, of which 5 overlap, 11 have partial overlap, 2 are gaps and 15 have a single owner.
 
 | Kind | Capabilities |
 |---|---|
-| Overlap (two or more full owners) | HTTP-native payment request (x402, MPP, L402); card-rail payments (TAP, ACP, with MPP partial); agent identity credential (KYA-OS, KYAPay, Baselayer); owner and deployer verification (Baselayer, KYAPay) |
-| Partial overlap | Mandate authorisation; stablecoin settlement; holder-of-key binding; human-to-agent authority; per-request proof; replay protection; agent discovery; DID resolution; credential status and revocation |
+| Overlap (two or more full owners) | HTTP-native payment request (x402, MPP, L402); card-rail payments (TAP, ACP, with MPP and UCP partial); agent identity credential (KYA-OS, KYAPay, Baselayer, with PAP partial); owner and deployer verification (Baselayer, KYAPay); checkout and order semantics (UCP, ACP) |
+| Partial overlap | Mandate authorisation; stablecoin settlement; holder-of-key binding; human-to-agent authority; per-request proof; replay protection; agent discovery; DID resolution; credential status and revocation; agent identified to the business (PAP, UCP partial); business capability discovery (UCP, PAP partial) |
 | Gap | Binding the decision to the payment; skill and capability attestation |
 
 ### Capability matrix
