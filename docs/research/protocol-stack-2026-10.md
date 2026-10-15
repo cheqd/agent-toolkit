@@ -10,8 +10,8 @@ Five layers, with the trust anchor underneath. Protocols at the same layer are a
 flowchart TB
     L4["<b>Layer 4 - Payment wire and settlement</b><br/><i>alternatives</i><br/>x402 (HTTP 402, stablecoin)<br/>MPP (sessions, multi-method)<br/>L402 (Lightning, macaroons)"]
     L3["<b>Layer 3 - Payment authority: who may pay, how much</b><br/>AP2 (intent, checkout and payment mandates, cnf key binding)<br/>ACP (checkout in ChatGPT)<br/>Visa TAP (card network)"]
-    L2["<b>Layer 2 - Agent identity, delegation and request proof</b><br/>KYA-OS (Entity Card, proof.v1, delegation credentials, cnf)<br/>KYAPay (kya and pay JWTs)<br/>Baselayer KYA (commercial, closed)"]
-    L1["<b>Layer 1 - Discovery and transport</b><br/>A2A (Agent Card, messages, tasks, extensions)<br/>MCP (tools and data)"]
+    L2["<b>Layer 2 - Agent identity, delegation and request proof</b><br/>KYA-OS (Entity Card, proof.v1, delegation credentials, cnf)<br/>KYAPay (kya and pay JWTs)<br/>Web Bot Auth (RFC 9421 signatures, Signature-Agent URL as identity, JWKS key directory)<br/>Baselayer KYA (commercial, closed)"]
+    L1["<b>Layer 1 - Discovery and transport</b><br/>A2A (Agent Card, messages, tasks, extensions)<br/>ANS (DNS-anchored agent names, identity certificates, transparency log, assurance tiers)<br/>MCP (tools and data)"]
     L0["<b>Layer 0 - Public trust anchor</b><br/>cheqd (did:cheqd, DID-Linked Resources, status lists, trust registries)<br/>did:web<br/>did:key"]
 
     L4 -->|"payment is authorised by"| L3
@@ -46,35 +46,43 @@ Two protocols were added to the map in October 2026, with a new Business-facing 
 - **PAP (Personal Agent Protocol, Sierra and Meta) is provisional.** Its v0.1 specification is due later in October and is unpublished. It is rated from press coverage only, so every PAP rating should be revisited when the specification lands. It is rated partial on agent identity credential and human-to-agent authority, and owns access tiers (guest, read, write) and business-side visibility of agent activity.
 - **UCP (Google Universal Commerce Protocol)** is rated from Google's developer blog post, not its specification. It owns business capability discovery (a manifest the business publishes) and checkout and order semantics, and is partial on mandate authorisation and card-rail payments because it defers payment security to AP2 and processing to payment handlers.
 
-Counts for the full map: 33 capabilities, of which 5 overlap, 11 have partial overlap, 2 are gaps and 15 have a single owner.
+ANS (Agent Name Service) and Web Bot Auth were added after reading both Internet-Drafts in full. Both are early drafts. ANS is `draft-narajala-courtney-ansv2-01` (independent submission, Informational, shown as expired and archived). Web Bot Auth is `draft-ietf-webbotauth-httpsig-protocol-00` (working-group draft, Standards Track). See the bullets under the capability matrix for what each does and does not cover.
+
+Counts for the full map: 37 capabilities, of which 6 overlap, 10 have partial overlap, 2 are gaps and 19 have a single owner.
 
 | Kind | Capabilities |
 |---|---|
-| Overlap (two or more full owners) | HTTP-native payment request (x402, MPP, L402); card-rail payments (TAP, ACP, with MPP and UCP partial); agent identity credential (KYA-OS, KYAPay, Baselayer, with PAP partial); owner and deployer verification (Baselayer, KYAPay); checkout and order semantics (UCP, ACP) |
-| Partial overlap | Mandate authorisation; stablecoin settlement; holder-of-key binding; human-to-agent authority; per-request proof; replay protection; agent discovery; DID resolution; credential status and revocation; agent identified to the business (PAP, UCP partial); business capability discovery (UCP, PAP partial) |
+| Overlap (two or more full owners) | HTTP-native payment request (x402, MPP, L402); card-rail payments (TAP, ACP, with MPP and UCP partial); agent identity credential (KYA-OS, KYAPay, Baselayer, ANS, with PAP partial); owner and deployer verification (Baselayer, KYAPay, with ANS partial); per-request proof (KYA-OS, Web Bot Auth); checkout and order semantics (UCP, ACP) |
+| Partial overlap | Mandate authorisation; stablecoin settlement; holder-of-key binding; human-to-agent authority; replay protection; agent discovery (A2A full, KYA-OS and ANS partial); DID resolution; credential status and revocation (cheqd full, KYA-OS and ANS partial); agent identified to the business (PAP, UCP partial); business capability discovery (UCP, PAP partial) |
 | Gap | Binding the decision to the payment; skill and capability attestation |
 
 ### Capability matrix
 
 ● owns the capability  ◐ partial  ○ none
 
-| Capability | A2A | KYA-OS | AP2 | x402 | MPP | L402 | cheqd |
-|---|---|---|---|---|---|---|---|
-| Agent discovery | ● | ◐ (Entity Card) | ○ | ○ | ◐ | ○ | ○ |
-| Message and task transport | ● | ○ | ○ | ○ | ◐ | ○ | ○ |
-| Agent identity | ◐ (signed card, no key trust model) | ● | ◐ (key binding only) | ○ | ◐ | ○ | ● (anchor) |
-| Delegated authority | ○ (multi-hop identity loss) | ● | ◐ (agent-to-agent out of scope) | ○ | ○ | ○ | ○ |
-| Per-request proof | ○ | ● | ○ | ◐ (payment signature) | ◐ | ◐ (macaroon) | ○ |
-| Payment authority | ○ | ○ | ● | ○ | ◐ | ○ | ○ |
-| Payment wire | ○ | ○ | ○ | ● | ● | ● | ○ |
-| Settlement | ○ | ○ | ○ | ● (USDC on-chain) | ◐ (cards and stablecoin) | ● (Lightning) | ○ |
-| Revocation and status | ○ | ● | ◐ | ○ | ○ | ○ | ● |
+| Capability | A2A | ANS | Web Bot Auth | KYA-OS | AP2 | x402 | MPP | L402 | cheqd |
+|---|---|---|---|---|---|---|---|---|---|
+| Agent discovery | ● | ◐ (DNS-anchored names) | ○ | ◐ (Entity Card) | ○ | ○ | ◐ | ○ | ○ |
+| Message and task transport | ● | ○ | ○ | ○ | ○ | ○ | ◐ | ○ | ○ |
+| Agent identity | ◐ (signed card, no key trust model) | ● (identity certificate) | ◐ (URL as identifier, no operator identity) | ● | ◐ (key binding only) | ○ | ◐ | ○ | ● (anchor) |
+| Delegated authority | ○ (multi-hop identity loss) | ○ | ○ (out of scope) | ● | ◐ (agent-to-agent out of scope) | ○ | ○ | ○ | ○ |
+| Per-request proof | ○ | ○ (mTLS, channel-level) | ● (HTTP message signature) | ● | ○ | ◐ (payment signature) | ◐ | ◐ (macaroon) | ○ |
+| Payment authority | ○ | ○ | ○ | ○ | ● | ○ | ◐ | ○ | ○ |
+| Payment wire | ○ | ○ | ○ | ○ | ○ | ● | ● | ● | ○ |
+| Settlement | ○ | ○ | ○ | ○ | ○ | ● (USDC on-chain) | ◐ (cards and stablecoin) | ● (Lightning) | ○ |
+| Revocation and status | ○ | ◐ (lifecycle events in log; identity-cert revocation unspecified) | ○ (no revocation, keys expire out of the directory) | ● | ◐ | ○ | ○ | ○ | ● |
 
 Reading the matrix:
 
 - **A2A and KYA-OS are complementary.** A2A carries the interaction. KYA-OS supplies what A2ABreak found missing: key trust, delegation and request proof.
 - **AP2 and x402 sit at different layers.** AP2 says whether an agent may pay. x402 is one way the payment travels. They are not rivals.
 - **x402, MPP and L402 compete** at layer 4. MPP is reported to accept x402 as one of its payment methods, so the two also overlap.
+- **ANS and Web Bot Auth are complementary.** ANS answers *which agent is this and should I trust its domain*: a name, a certificate and an assurance tier. Web Bot Auth answers *did the holder of this key sign this request*: an HTTP message signature, with the key found at a URL the agent names in `Signature-Agent`.
+- **Neither carries delegation.** Web Bot Auth defers it (a chained signature shows forwarding, not authorisation). ANS only mentions a W3C Verifiable Credential for a platform registering on a tenant's behalf, and an RFC 8693 token for human authority. KYA-OS remains the only full owner.
+- **Web Bot Auth identifies a URL, not an operator.** The draft says the signature proves control of a published key and says nothing about who runs the agent, and it excludes trust accrual and authorisation. It defines no revocation: removal from the directory takes effect when caches expire. Both are places where a ledger-anchored identity and status could plug in.
+- **ANS authenticates the channel, not each request.** The agent proves itself by mTLS and a sealed badge. Detached JWS signing is used for registration-authority API calls only, so ANS does not own per-request proof.
+- **ANS names a DID as a complement, not a dependency.** Its principal binding can carry a DID, and `did:web` and `did:ethr` are listed as future work. `did:cheqd` is not mentioned. Its transparency log (SCITT-style, Merkle proofs, COSE receipts) is an alternative to ledger anchoring for lifecycle evidence.
+- **Both are early drafts.** Web Bot Auth is `draft-ietf-webbotauth-httpsig-protocol-00` (1 Sep 2026, Standards Track, working-group draft, Cloudflare and Google authors). ANS is `draft-narajala-courtney-ansv2-01` (13 Apr 2026, independent submission, Informational; authors from GoDaddy, OWASP, DistributedApps.ai and Cisco), shown as expired and archived on the Datatracker. ANS has internal inconsistencies, for example OV or EV server certificates in Table 1 against a DV example in Appendix A.3, and its Trust Index and federation are described but not specified.
 - **cheqd is not a protocol in this stack.** It supplies durable, independently resolvable identity and status that layers 1 to 3 can reference.
 - **Gaps:** nothing here ties the signed *decision* to the payment. The AP2 whisper-attack paper reports this gap, and key binding does not close it.
 

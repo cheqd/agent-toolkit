@@ -24,7 +24,8 @@ import html
 # protocol -> colour
 COL={'A2A':'#2f7fd1','KYA-OS':'#e0782a','AP2':'#2e9e6b','x402':'#8a56c2','MPP':'#c2398a','L402':'#b8960b','cheqd':'#1b8a8a',
      'ACP':'#6b7a8f','TAP':'#6b7a8f','KYAPay':'#c4572d','Baselayer':'#6b7a8f','MCP':'#2f7fd1',
-     'UCP':'#8c5a2b','PAP':'#4f46e5'}
+     'UCP':'#8c5a2b','PAP':'#4f46e5','ANS':'#0f7fa6','WebBotAuth':'#7a4a2a'}
+LABEL={'WebBotAuth':'Web Bot Auth'}
 # Protocols whose ratings are provisional (specification unpublished or rated from secondary sources).
 # Their chips render dashed, and a box owned only by provisional protocols gets a dotted border.
 PROVISIONAL={'PAP'}
@@ -46,16 +47,17 @@ ROWS=[
  ]),
  ("Identity and delegation", [
    ("Agent identity", [
-     cap("Agent identity credential",[('KYA-OS','F'),('KYAPay','F'),('Baselayer','F'),('PAP','P')]),
-     cap("Holder-of-key binding",[('KYA-OS','F'),('AP2','P')]),
-     cap("Owner and deployer verification",[('Baselayer','F'),('KYAPay','F')])]),
+     cap("Agent identity credential",[('KYA-OS','F'),('KYAPay','F'),('Baselayer','F'),('ANS','F'),('PAP','P')]),
+     cap("Holder-of-key binding",[('KYA-OS','F'),('AP2','P'),('WebBotAuth','P')]),
+     cap("Owner and deployer verification",[('Baselayer','F'),('KYAPay','F'),('ANS','P')])]),
    ("Delegation", [
      cap("Human-to-agent authority",[('KYA-OS','F'),('AP2','P'),('PAP','P')]),
      cap("Agent-to-agent delegation chain",[('KYA-OS','F')])]),
    ("Request proof", [
-     cap("Per-request proof",[('KYA-OS','F'),('x402','P'),('L402','P')]),
+     cap("Per-request proof",[('KYA-OS','F'),('WebBotAuth','F'),('x402','P'),('L402','P')]),
      cap("Response proof",[('KYA-OS','P')]),
-     cap("Replay protection",[('KYA-OS','F'),('x402','P')])]),
+     cap("Replay protection",[('KYA-OS','F'),('x402','P'),('WebBotAuth','P')]),
+     cap("Signing key directory",[('WebBotAuth','F')])]),
  ]),
  ("Business-facing", [
    ("Access and visibility", [
@@ -68,7 +70,9 @@ ROWS=[
  ]),
  ("Discovery and transport", [
    ("Discovery", [
-     cap("Agent discovery",[('A2A','F'),('KYA-OS','P')]),
+     cap("Agent discovery",[('A2A','F'),('KYA-OS','P'),('ANS','P')]),
+     cap("Domain-anchored agent naming",[('ANS','F')]),
+     cap("Identity assurance tiers",[('ANS','F')]),
      cap("Agent Card signature",[('A2A','P')]),
      cap("Skill and capability attestation",[],True)]),
    ("Interaction", [
@@ -82,8 +86,9 @@ ROWS=[
      cap("Reciprocal did:web and did:cheqd linkage",[('cheqd','F')]),
      cap("Versioned policy artefacts",[('cheqd','F')])]),
    ("Status", [
-     cap("Credential status and revocation",[('cheqd','F'),('KYA-OS','P')]),
-     cap("Trust registry standing",[('cheqd','F')])]),
+     cap("Credential status and revocation",[('cheqd','F'),('KYA-OS','P'),('ANS','P')]),
+     cap("Trust registry standing",[('cheqd','F')]),
+     cap("Append-only transparency log",[('ANS','F')])]),
  ]),
 ]
 def _arg(flag):
@@ -122,7 +127,7 @@ def box(c):
     k=kind(c); stats[k].append(c['name'])
     def chip(p,l):
         cls='chip'+(' p' if l=='P' else '')+(' prov' if p in PROVISIONAL else '')
-        return f'<span class="{cls}" style="--c:{COL[p]}">{html.escape(p)}{"" if l=="F" else " <span class=h>◐</span>"}</span>'
+        return f'<span class="{cls}" style="--c:{COL[p]}">{html.escape(LABEL.get(p,p))}{"" if l=="F" else " <span class=h>◐</span>"}</span>'
     chips=''.join(chip(p,l) for p,l in c['owners'])
     if c['gap']: chips='<span class="chip none">no owner</span>'
     prov=' prov' if c['owners'] and all(p in PROVISIONAL for p,l in c['owners']) else ''
@@ -131,7 +136,7 @@ rows=''
 for rname, groups in ROWS:
     g=''.join(f'<div class="grp"><div class="gt">{html.escape(gn)}</div><div class="caps">{"".join(box(c) for c in cs)}</div></div>' for gn,cs in groups)
     rows+=f'<div class="row"><div class="rl">{html.escape(rname)}</div><div class="groups">{g}</div></div>'
-legend=''.join(f'<span class="chip" style="--c:{COL[p]}">{p}</span>' for p in ['A2A','MCP','KYA-OS','KYAPay','AP2','x402','MPP','L402','UCP','cheqd'] if p in COL)+'<span class="chip" style="--c:#6b7a8f">ACP / TAP / Baselayer</span>'+'<span class="chip prov" style="--c:#4f46e5">PAP</span>'
+legend=''.join(f'<span class="chip" style="--c:{COL[p]}">{LABEL.get(p,p)}</span>' for p in ['A2A','MCP','KYA-OS','KYAPay','ANS','WebBotAuth','AP2','x402','MPP','L402','UCP','cheqd'] if p in COL)+'<span class="chip" style="--c:#6b7a8f">ACP / TAP / Baselayer</span>'+'<span class="chip prov" style="--c:#4f46e5">PAP</span>'
 page=f'''<!doctype html><meta charset=utf-8><style>
 body{{margin:0;padding:24px;background:#fff;font-family:Helvetica,Arial,'DejaVu Sans',sans-serif;color:#222;width:1560px}}
 h1{{font-size:20px;margin:0 0 4px}} .sub{{font-size:12px;color:#555;margin-bottom:14px}}
