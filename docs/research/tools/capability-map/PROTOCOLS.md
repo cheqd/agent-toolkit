@@ -30,23 +30,23 @@ Every protocol that appears in the capability map ([`generate.py`](./generate.py
 
 Collected 16 Oct 2026 from the GitHub API and the npm and PyPI download APIs. "Commits (90d)" counts commits to the default branch since 18 Jul 2026.
 
-| Protocol | Main repo | Stars | Forks | Contributors | Commits (90d) | Latest release | Package downloads (last month) |
+| Protocol | Main repo | Stars | Forks | Contributors | Commits (90d) | Latest release | Package downloads (last 4 weeks, per registry the top package) |
 |---|---|---|---|---|---|---|---|
-| A2A | [a2aproject/A2A](https://github.com/a2aproject/A2A) | 26,175 | 2,675 | 176 | 64 | v1.0.1, 28 May 2026 | `@a2a-js/sdk` 15.4M (npm); `a2a-sdk` 11.4M (PyPI) |
-| MCP | [modelcontextprotocol/modelcontextprotocol](https://github.com/modelcontextprotocol/modelcontextprotocol) | 9,458 | 1,870 | 372 | 390 | 28 Jul 2026 | `@modelcontextprotocol/sdk` 273M (npm); `mcp` 235M (PyPI) |
-| x402 | [x402-foundation/x402](https://github.com/x402-foundation/x402) | 6,723 | 2,192 | 334 | 267 | no GitHub releases | `x402` 2.0M, `@x402/core` 1.5M, `@x402/fetch` 552k (npm); `x402` 205k (PyPI) |
-| UCP | [Universal-Commerce-Protocol/ucp](https://github.com/Universal-Commerce-Protocol/ucp) | 3,429 | 479 | 64 | 98 | v2026-08-25 | `@ucp-js/sdk` 52k (npm); `ucp-sdk` 8.6k (PyPI) |
-| AP2 | [google-agentic-commerce/AP2](https://github.com/google-agentic-commerce/AP2) | 3,230 | 512 | 19 | 0 | v0.2.0, 28 Apr 2026 | None found. The `ap2` package on PyPI belongs to an unrelated project |
-| ACP | [agentic-commerce-protocol/agentic-commerce-protocol](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol) | 1,574 | 255 | 26 | 0 | no GitHub releases | None found |
-| TAP | [visa/trusted-agent-protocol](https://github.com/visa/trusted-agent-protocol) | 213 | 45 | 2 | 0 | no GitHub releases | None found |
-| MPP | [wevm/mppx](https://github.com/wevm/mppx) (TypeScript SDK) and [tempoxyz/mpp-specs](https://github.com/tempoxyz/mpp-specs) | 186 and 95 | 71 and 71 | 31 and 23 | 262 and 41 | `mppx@0.13.5`, 15 Oct 2026 (122 releases) | `mppx` 1.04M (npm) |
-| L402 | [lightninglabs/aperture](https://github.com/lightninglabs/aperture) and [lightninglabs/L402](https://github.com/lightninglabs/L402) | 271 and 91 | 82 and 19 | 27 and 8 | 106 and 0 | aperture v0.5.0, 25 Mar 2026 | None checked |
-| Web Bot Auth | [cloudflare/web-bot-auth](https://github.com/cloudflare/web-bot-auth) | 170 | 43 | 17 | 35 | no GitHub releases | `web-bot-auth` 736k (npm) |
-| x401 | [proof/x401](https://github.com/proof/x401) | 42 | 5 | 4 | 3 | no GitHub releases | `@proof.com/x401-node` 744 (npm) |
-| ANS | [agentnameservice/ans](https://github.com/agentnameservice/ans) (reference implementation) | 43 | 6 | 9 | 29 | v0.1.6, 26 Jun 2026 | None found |
-| KYA-OS | [decentralized-identity/kya-os-mcp](https://github.com/decentralized-identity/kya-os-mcp) | 31 | 13 | 6 | 178 | v1.20.0, 13 Oct 2026 | `@kya-os/mcp` 57k, `@kya-os/mcp-i` 16k (npm) |
-| PAP (Poppy) | [personal-agent-protocol/personal-agent-protocol](https://github.com/personal-agent-protocol/personal-agent-protocol) (spec and site, created 14 Oct 2026) | 20 | 1 | 1 | 3 | no GitHub releases | None found |
-| KYAPay | [skyfire-xyz/kyapay](https://github.com/skyfire-xyz/kyapay) | 13 | 0 | 8 | 1 | no GitHub releases | None found |
+| A2A | [a2aproject/A2A](https://github.com/a2aproject/A2A) | 26,175 | 2,675 | 176 | 64 | v1.0.1, 28 May 2026 | `@a2a-js/sdk` 14.4M (npm); `a2a-sdk` 11.1M (PyPI); `a2a-lf` 55K (crates.io) |
+| MCP | [modelcontextprotocol/modelcontextprotocol](https://github.com/modelcontextprotocol/modelcontextprotocol) | 9,458 | 1,870 | 372 | 390 | 28 Jul 2026 | `@modelcontextprotocol/sdk` 256.4M (npm); `mcp` 229.2M (PyPI); `rmcp` 8.5M (crates.io) |
+| x402 | [x402-foundation/x402](https://github.com/x402-foundation/x402) | 6,723 | 2,192 | 334 | 267 | no GitHub releases | `x402` 1.9M (npm); `x402` 223K (PyPI) |
+| UCP | [Universal-Commerce-Protocol/ucp](https://github.com/Universal-Commerce-Protocol/ucp) | 3,429 | 479 | 64 | 98 | v2026-08-25 | `@ucp-js/sdk` 50K (npm); `ucp-sdk` 7.2K (PyPI); `ucp-schema` 829 (crates.io) |
+| AP2 | [google-agentic-commerce/AP2](https://github.com/google-agentic-commerce/AP2) | 3,230 | 512 | 19 | 0 | v0.2.0, 28 Apr 2026 | None found on npm, PyPI or crates.io |
+| ACP | [agentic-commerce-protocol/agentic-commerce-protocol](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol) | 1,574 | 255 | 26 | 0 | no GitHub releases | `agentic-commerce-protocol` 47 (npm); `agentic-commerce-protocol` 50 (PyPI) |
+| TAP | [visa/trusted-agent-protocol](https://github.com/visa/trusted-agent-protocol) | 213 | 45 | 2 | 0 | no GitHub releases | None found on npm, PyPI or crates.io |
+| MPP | [wevm/mppx](https://github.com/wevm/mppx) (TypeScript SDK) and [tempoxyz/mpp-specs](https://github.com/tempoxyz/mpp-specs) | 186 and 95 | 71 and 71 | 31 and 23 | 262 and 41 | `mppx@0.13.5`, 15 Oct 2026 (122 releases) | `mppx` 977K (npm); `pympp` 2.0M (PyPI) |
+| L402 | [lightninglabs/aperture](https://github.com/lightninglabs/aperture) and [lightninglabs/L402](https://github.com/lightninglabs/L402) | 271 and 91 | 82 and 19 | 27 and 8 | 106 and 0 | aperture v0.5.0, 25 Mar 2026 | `@lightninglabs/l402` 104 (npm); `l402` 24 (PyPI, community) |
+| Web Bot Auth | [cloudflare/web-bot-auth](https://github.com/cloudflare/web-bot-auth) | 170 | 43 | 17 | 35 | no GitHub releases | `web-bot-auth` 689K (npm); `web-bot-auth` 82K (crates.io) |
+| x401 | [proof/x401](https://github.com/proof/x401) | 42 | 5 | 4 | 3 | no GitHub releases | `@proof.com/x401-node` 729 (npm) |
+| ANS | [agentnameservice/ans](https://github.com/agentnameservice/ans) (reference implementation) | 43 | 6 | 9 | 29 | v0.1.6, 26 Jun 2026 | None found on npm, PyPI or crates.io |
+| KYA-OS | [decentralized-identity/kya-os-mcp](https://github.com/decentralized-identity/kya-os-mcp) | 31 | 13 | 6 | 178 | v1.20.0, 13 Oct 2026 | `@kya-os/mcp` 54K (npm) |
+| PAP (Poppy) | [personal-agent-protocol/personal-agent-protocol](https://github.com/personal-agent-protocol/personal-agent-protocol) (spec and site, created 14 Oct 2026) | 20 | 1 | 1 | 3 | no GitHub releases | `@datalayer/personal-agent-protocol` 2.0K (npm, community); `personal-agent-protocol` 1.4K (PyPI, community) |
+| KYAPay | [skyfire-xyz/kyapay](https://github.com/skyfire-xyz/kyapay) | 13 | 0 | 8 | 1 | no GitHub releases | `@skyfire-xyz/skyfire-seller-sdk-node` 52 (npm) |
 | cheqd | [cheqd/did-resolver](https://github.com/cheqd/did-resolver) | 12 | 7 | 17 | 3 | v3.8.5, 3 Sep 2026 | `@cheqd/sdk` 3.4k, `@cheqd/did-provider-cheqd` 864 (npm) |
 | Baselayer KYA | No public repo | n/a | n/a | n/a | n/a | n/a | n/a |
 
@@ -65,37 +65,38 @@ Collected 16 Oct 2026 from the GitHub API and the npm and PyPI download APIs. "C
 - Stars measure attention more than use. The x401 and PAP repos are days or weeks old.
 - The MPP and L402 rows cover two repos each because the specification and the reference code live apart.
 - `coinbase/x402` is a fork of `x402-foundation/x402` with 168 stars. The canonical repo is the foundation's.
-- Package-to-repo mappings were checked against npm registry metadata for `web-bot-auth`, `x402`, `mppx`, `@a2a-js/sdk`, `@kya-os/mcp`, `@modelcontextprotocol/sdk`, `@ucp-js/sdk`, `@proof.com/x401-node` and `@cheqd/sdk`. `@x402/core` and `@x402/fetch` are assumed to be x402 SDK packages. `ucp-sdk` and `a2a-sdk` on PyPI were matched by name only.
+- Packages were matched to protocols by the repository URL in their registry metadata. `pympp` and `pytempo` are published by Tempo, `agentic-commerce-protocol` by Svix and `l402` by Fewsats, and I did not verify that these publishers are authorised by the protocol owners. The `ap2` package on PyPI belongs to an unrelated project and is not counted.
 
 ## Traction charts
 
-Three charts, drawn from the data in the metrics table. They follow the system light or dark setting. Hover a point in a browser for the exact value.
+Four charts, drawn from the data in the metrics table. cheqd is not charted. They follow the system light or dark setting, and hovering a point in a browser gives the exact value. Each ends with a "Not covered by this chart" box.
+
+![Weekly commits to each protocol, added across its repositories](./traction/commit-activity.svg)
+
+**Development activity.** Commits are added across each protocol's repositories, including SDKs and samples, so a protocol is not judged by its specification repository alone. MCP leads (4,070 commits across 6 repositories in the last year), then A2A (2,050 across 8), MPP, x402 and UCP. AP2, ACP and TAP are flat. Protocols with several repositories carry a repository count, and the box lists every repository added.
+
+PAP's 179 commits come mostly from a community SDK. [`datalayer/personal-agent-protocol`](https://github.com/datalayer/personal-agent-protocol) is a Python and TypeScript SDK by Datalayer, Inc. (BSD-3-Clause, created 10 Oct 2026, 162 commits in its first days, nearly all by one author, with releases 0.21 to 0.24 between 13 and 14 Oct). It is a third-party implementation of the draft, not Sierra's or Meta's. The protocol's own repository, `personal-agent-protocol/personal-agent-protocol`, holds the spec and website and has 3 commits. Community repositories are marked with a dagger in the box.
+
+![Weekly package downloads for each protocol across npm, PyPI and crates.io](./traction/downloads-all-registries.svg)
+
+**Downloads, all registries.** The same 12 weeks for every protocol, with npm, PyPI and crates.io added together. Per registry the most downloaded package is counted, so a package and its dependencies are not counted twice. MCP is far ahead (129M a week), then A2A (6.9M), MPP (1.5M, more from `pympp` on PyPI than from `mppx` on npm), x402 (542K) and Web Bot Auth (181K). PAP, L402, ACP and KYAPay have small series from community or vendor packages. AP2, TAP, ANS and Baselayer KYA have none: no package was found for AP2 (the `ap2` package on PyPI belongs to an unrelated project), TAP or ANS on npm, PyPI or crates.io, and Baselayer is closed.
 
 ![Weekly npm downloads of each protocol's main SDK, log scale](./traction/npm-downloads.svg)
 
-**Downloads over time.** MCP is two orders of magnitude ahead of everything else and still rising (about 0.8M to 65M a week). A2A's JavaScript SDK went from about 100 to 4.1M a week in 16 months. x402 has grown steadily to 467K a week. MPP's SDK went from 317 downloads in its first week (9 Feb 2026) to 336K and is closing on Web Bot Auth. UCP and KYA-OS are two to three orders of magnitude smaller, and x401's SDK is under 300 a week.
-
-![Weekly commits to each protocol's main repository, small multiples](./traction/commit-activity.svg)
-
-**Development activity.** MCP, x402 and MPP carry most of the commit volume. AP2, ACP and TAP are flat, which matches their last pushes of June, July and October 2025.
+**npm history.** Eight protocols on one log scale since April 2025, the longest history any registry gives. MCP is two orders of magnitude ahead and still rising. A2A's JavaScript SDK went from about 100 to 4.1M a week in 16 months. MPP's SDK went from 317 downloads in its first week to 336K. UCP and KYA-OS are two to three orders of magnitude smaller, and x401's SDK is under 300 a week. The palette allows eight series, so the other protocols with npm packages are listed in the box and shown in the all-registries chart.
 
 ![GitHub stars on each protocol's main repository, log scale](./traction/github-stars.svg)
 
-**Stars.** A2A leads, then MCP, x402, UCP and AP2. AP2 and ACP hold thousands of stars with no recent commits, so their attention has outrun their activity. Hollow dots mark repositories with no commits in the last 13 weeks.
+**Stars.** A2A leads, then MCP, x402, UCP and AP2. AP2 and ACP hold thousands of stars with no recent commits. Hollow dots mark repositories with no commits in the last 13 weeks. Only one repository per protocol is charted, and others can be larger: the MCP Python and TypeScript SDKs hold more stars than the specification repository (24,593 and 13,590 against 9,458).
 
-**No data is marked, not hidden.** Dashed boxes and rows show where a protocol has no series, with the reason. Baselayer KYA is a closed commercial product, so it has no repository or package on any chart. Protocols without an official npm package identified (AP2, ACP, TAP, L402, ANS, PAP, KYAPay) are listed under "No download series". cheqd has download data but is not plotted, because the palette allows eight series. "Not collected" means none was found, not that none exists.
+### Gaps marked on the charts
 
-### Other gaps marked on the charts
+- **No data is marked, not hidden.** Dashed boxes and panels show where a protocol has nothing to plot, with the reason.
+- **No repository or package yet.** Dashed shading marks weeks before a repository existed (commits chart) or before a package had downloads (all-registries chart), so a flat line means no activity rather than no project.
+- **Counting choices.** Commits use the default branch only. Downloads cover npm, PyPI and crates.io. Maven, NuGet, Go modules and container pulls are not measured, and downloads include CI and mirrors.
+- **Star history over time** is not shown. GitHub's stargazer endpoints returned nothing in this environment, so stars are a snapshot.
 
-- **Each chart ends with a "Not covered by this chart" box.** It lists the protocols with no data and the other repositories or packages that are not charted, with their stars, commits or downloads. Only one repository and one package is charted per protocol, and others can be larger: the MCP Python and TypeScript SDK repositories hold more stars than the specification repository charted (24,593 and 13,590 against 9,458), and `a2a-sdk` on PyPI has about 11.4M downloads a month against 15.4M for the npm package charted.
-- **Repository did not exist yet.** In the commits chart, dashed shading marks weeks before a repository was created (KYA-OS, UCP, MPP, ANS, x401, PAP), so a flat line means no commits rather than no repository.
-- **SDK or implementation repository charted, not the specification.** An asterisk marks MPP (`wevm/mppx`), L402 (`lightninglabs/aperture`), ANS (`agentnameservice/ans`), Web Bot Auth (`cloudflare/web-bot-auth`) and cheqd (`cheqd/did-resolver`). Each footnote names what is not charted.
-- **One package per protocol** in the downloads chart. x402 also publishes `@x402/core` and KYA-OS also publishes `@kya-os/mcp-i`.
-- **Window cut-off.** The downloads window opens 21 Apr 2025, so earlier history for MCP, x402 and Web Bot Auth is not shown.
-
-**Not shown:** star history over time. GitHub's stargazer endpoints returned nothing in this environment, so stars appear only as a snapshot. SDK downloads exist only for npm packages, so those protocols have no line in the first chart.
-
-The lists of other repositories and packages are set in `OTHERS` and `OTHER_PACKAGES` in `traction/fetch.py`. Refresh with `python3 traction/fetch.py` (needs `gh` logged in), then `python3 traction/render.py`. The data behind the charts is in [`traction/data.json`](./traction/data.json).
+The repositories and packages counted are set in `OTHERS` and `PACKAGES` in `traction/fetch.py`. Refresh with `python3 traction/fetch.py` (needs `gh` logged in), then `python3 traction/render.py`. The data behind the charts is in [`traction/data.json`](./traction/data.json).
 
 ## Notes
 
