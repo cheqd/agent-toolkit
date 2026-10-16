@@ -33,7 +33,7 @@ flowchart TB
 
 ### Capability map with overlaps and gaps
 
-Each box is one capability. Chips show which protocols cover it: filled means the protocol owns it, outlined with ◐ means partial. Red boxes have two or more full owners (real overlap). Amber boxes have one owner plus partial coverage. Dashed boxes have no owner. Dashed chips and dotted purple boxes mark provisional entries (see below).
+Each box is one capability. Chips show which protocols cover it: filled means the protocol owns it, outlined with ◐ means partial. Red boxes have two or more full owners (real overlap). Amber boxes have one owner plus partial coverage. Dashed boxes have no owner. Dashed chips and dotted purple boxes mark provisional entries (none at present).
 
 ![Agentic protocol capability map showing overlaps and gaps](./images/protocol-capability-map.png)
 
@@ -41,19 +41,21 @@ The ratings are data in [`tools/capability-map/generate.py`](./tools/capability-
 
 A version without cheqd (no cheqd chips and no Trust anchor row) is at [`images/protocol-capability-map-neutral.png`](./images/protocol-capability-map-neutral.png). Generate it with the `--no-cheqd` toggle.
 
-Two protocols were added to the map in October 2026, with a new Business-facing row:
+Three protocols were added to the map in October 2026, one with a new Business-facing row:
 
-- **PAP (Personal Agent Protocol, Sierra and Meta) is provisional.** Its v0.1 specification is due later in October and is unpublished. It is rated from press coverage only, so every PAP rating should be revisited when the specification lands. It is rated partial on agent identity credential and human-to-agent authority, and owns access tiers (guest, read, write) and business-side visibility of agent activity.
+- **PAP (Personal Agent Protocol, nicknamed Poppy, Sierra and Meta)** is rated from draft 0.1 of its specification, published 9 Oct 2026 and read in its [source repository](https://github.com/personal-agent-protocol/personal-agent-protocol) (commit of 15 Oct). It is a draft and can change incompatibly. It owns holder-of-key binding, per-request proof and replay protection (DPoP-bound session tokens, RFC 9449), human-to-agent authority (OAuth sign-in with `poppy:read` and `poppy:write` scopes and a revocable account token), business capability discovery (`/.well-known/poppy.json`), access tiers (guest, read, write) and business-side visibility of agent activity. It is partial on agent identity credential (an agent is an HTTPS `client_id` URL with a key set, not a credential), messages and tasks, extension negotiation, signing key directory and credential status. See [pap-2026-10.md](./pap-2026-10.md).
 - **UCP (Google Universal Commerce Protocol)** is rated from Google's developer blog post, not its specification. It owns business capability discovery (a manifest the business publishes) and checkout and order semantics, and is partial on mandate authorisation and card-rail payments because it defers payment security to AP2 and processing to payment handlers.
+
+- **x401 (Proof)** is rated from draft 0.2.0 of its specification (editors from Proof and Circle), with the design goals, binding, agent identification, security and open-questions sections read. It is an HTTP proof requirement: the server returns 401 with a verifier-authored Digital Credentials request, and the agent retries with the result. It owns the verifier-defined credential requirement and is partial on owner and deployer verification, human-to-agent authority, holder-of-key binding, per-request proof, replay protection and credential status. It proves attributes of a credential holder, not the agent, and defines no payment, so it is not rated on spend limits. Agent binding is optional and delegation is an open question in the draft.
 
 ANS (Agent Name Service) and Web Bot Auth were added after reading both Internet-Drafts in full. Both are early drafts. ANS is `draft-narajala-courtney-ansv2-01` (independent submission, Informational, shown as expired and archived). Web Bot Auth is `draft-ietf-webbotauth-httpsig-protocol-00` (working-group draft, Standards Track). See the bullets under the capability matrix for what each does and does not cover.
 
-Counts for the full map: 37 capabilities, of which 6 overlap, 10 have partial overlap, 2 are gaps and 19 have a single owner.
+Counts for the full map: 38 capabilities, of which 10 overlap, 9 have partial overlap, 2 are gaps and 17 have a single owner.
 
 | Kind | Capabilities |
 |---|---|
-| Overlap (two or more full owners) | HTTP-native payment request (x402, MPP, L402); card-rail payments (TAP, ACP, with MPP and UCP partial); agent identity credential (KYA-OS, KYAPay, Baselayer, ANS, with PAP partial); owner and deployer verification (Baselayer, KYAPay, with ANS partial); per-request proof (KYA-OS, Web Bot Auth); checkout and order semantics (UCP, ACP) |
-| Partial overlap | Mandate authorisation; stablecoin settlement; holder-of-key binding; human-to-agent authority; replay protection; agent discovery (A2A full, KYA-OS and ANS partial); DID resolution; credential status and revocation (cheqd full, KYA-OS and ANS partial); agent identified to the business (PAP, UCP partial); business capability discovery (UCP, PAP partial) |
+| Overlap (two or more full owners) | HTTP-native payment request (x402, MPP, L402); card-rail payments (TAP, ACP, with MPP and UCP partial); agent identity credential (KYA-OS, KYAPay, Baselayer, ANS, with PAP partial); holder-of-key binding (KYA-OS, PAP, with AP2, Web Bot Auth and x401 partial); owner and deployer verification (Baselayer, KYAPay, with ANS and x401 partial); human-to-agent authority (KYA-OS, PAP, with AP2 and x401 partial); per-request proof (KYA-OS, Web Bot Auth, PAP, with x401, x402 and L402 partial); replay protection (KYA-OS, PAP, with x401, x402 and Web Bot Auth partial); business capability discovery (UCP, PAP); checkout and order semantics (UCP, ACP) |
+| Partial overlap | Mandate authorisation (AP2, with ACP, TAP and UCP partial); stablecoin settlement (x402, with MPP partial); signing key directory (Web Bot Auth, with PAP partial); agent identified to the business (PAP, with UCP partial); agent discovery (A2A full, KYA-OS and ANS partial); messages and tasks (A2A, with PAP partial); extension negotiation (A2A, with PAP partial); DID resolution (cheqd, with KYA-OS partial); credential status and revocation (cheqd full, KYA-OS, ANS, PAP and x401 partial) |
 | Gap | Binding the decision to the payment; skill and capability attestation |
 
 ### Capability matrix
