@@ -6083,6 +6083,527 @@
     1791676800,
     0
    ]
+  ],
+  "KYAPay": [
+   [
+    1760832000,
+    0
+   ],
+   [
+    1761436800,
+    0
+   ],
+   [
+    1762041600,
+    0
+   ],
+   [
+    1762646400,
+    0
+   ],
+   [
+    1763251200,
+    0
+   ],
+   [
+    1763856000,
+    0
+   ],
+   [
+    1764460800,
+    0
+   ],
+   [
+    1765065600,
+    0
+   ],
+   [
+    1765670400,
+    0
+   ],
+   [
+    1766275200,
+    0
+   ],
+   [
+    1766880000,
+    0
+   ],
+   [
+    1767484800,
+    0
+   ],
+   [
+    1768089600,
+    0
+   ],
+   [
+    1768694400,
+    0
+   ],
+   [
+    1769299200,
+    0
+   ],
+   [
+    1769904000,
+    0
+   ],
+   [
+    1770508800,
+    0
+   ],
+   [
+    1771113600,
+    0
+   ],
+   [
+    1771718400,
+    1
+   ],
+   [
+    1772323200,
+    0
+   ],
+   [
+    1772928000,
+    1
+   ],
+   [
+    1773532800,
+    0
+   ],
+   [
+    1774137600,
+    0
+   ],
+   [
+    1774742400,
+    0
+   ],
+   [
+    1775347200,
+    0
+   ],
+   [
+    1775952000,
+    2
+   ],
+   [
+    1776556800,
+    0
+   ],
+   [
+    1777161600,
+    3
+   ],
+   [
+    1777766400,
+    5
+   ],
+   [
+    1778371200,
+    0
+   ],
+   [
+    1778976000,
+    0
+   ],
+   [
+    1779580800,
+    0
+   ],
+   [
+    1780185600,
+    0
+   ],
+   [
+    1780790400,
+    0
+   ],
+   [
+    1781395200,
+    0
+   ],
+   [
+    1782000000,
+    0
+   ],
+   [
+    1782604800,
+    0
+   ],
+   [
+    1783209600,
+    0
+   ],
+   [
+    1783814400,
+    0
+   ],
+   [
+    1784419200,
+    0
+   ],
+   [
+    1785024000,
+    0
+   ],
+   [
+    1785628800,
+    0
+   ],
+   [
+    1786233600,
+    0
+   ],
+   [
+    1786838400,
+    0
+   ],
+   [
+    1787443200,
+    0
+   ],
+   [
+    1788048000,
+    1
+   ],
+   [
+    1788652800,
+    0
+   ],
+   [
+    1789257600,
+    0
+   ],
+   [
+    1789862400,
+    0
+   ],
+   [
+    1790467200,
+    0
+   ],
+   [
+    1791072000,
+    0
+   ],
+   [
+    1791676800,
+    0
+   ]
   ]
- }
+ },
+ "others": {
+  "A2A": [
+   {
+    "repo": "a2aproject/a2a-python",
+    "stars": 2203,
+    "pushed": "2026-10-16",
+    "commits52w": 428,
+    "archived": false
+   },
+   {
+    "repo": "a2aproject/a2a-js",
+    "stars": 643,
+    "pushed": "2026-10-15",
+    "commits52w": 352,
+    "archived": false
+   },
+   {
+    "repo": "a2aproject/a2a-java",
+    "stars": 505,
+    "pushed": "2026-10-15",
+    "commits52w": 479,
+    "archived": false
+   },
+   {
+    "repo": "a2aproject/a2a-go",
+    "stars": 487,
+    "pushed": "2026-10-15",
+    "commits52w": 252,
+    "archived": false
+   },
+   {
+    "repo": "a2aproject/a2a-dotnet",
+    "stars": 267,
+    "pushed": "2026-10-15",
+    "commits52w": 235,
+    "archived": false
+   },
+   {
+    "repo": "a2aproject/a2a-rs",
+    "stars": 94,
+    "pushed": "2026-10-16",
+    "commits52w": 248,
+    "archived": false
+   },
+   {
+    "repo": "a2aproject/a2a-samples",
+    "stars": 1799,
+    "pushed": "2026-09-30",
+    "commits52w": 49,
+    "archived": false
+   },
+   {
+    "repo": "a2aproject/a2a-inspector",
+    "stars": 501,
+    "pushed": "2026-10-01",
+    "commits52w": 17,
+    "archived": false
+   }
+  ],
+  "MCP": [
+   {
+    "repo": "modelcontextprotocol/typescript-sdk",
+    "stars": 13590,
+    "pushed": "2026-10-14",
+    "commits52w": 468,
+    "archived": false
+   },
+   {
+    "repo": "modelcontextprotocol/python-sdk",
+    "stars": 24593,
+    "pushed": "2026-10-13",
+    "commits52w": 474,
+    "archived": false
+   },
+   {
+    "repo": "modelcontextprotocol/java-sdk",
+    "stars": 3739,
+    "pushed": "2026-10-15",
+    "commits52w": 202,
+    "archived": false
+   },
+   {
+    "repo": "modelcontextprotocol/go-sdk",
+    "stars": 5231,
+    "pushed": "2026-10-16",
+    "commits52w": 366,
+    "archived": false
+   },
+   {
+    "repo": "modelcontextprotocol/csharp-sdk",
+    "stars": 4587,
+    "pushed": "2026-10-15",
+    "commits52w": 456,
+    "archived": false
+   },
+   {
+    "repo": "modelcontextprotocol/rust-sdk",
+    "stars": 4018,
+    "pushed": "2026-10-15",
+    "commits52w": 479,
+    "archived": false
+   }
+  ],
+  "x402": [
+   {
+    "repo": "google-agentic-commerce/a2a-x402",
+    "stars": 564,
+    "pushed": "2026-08-04",
+    "commits52w": 18,
+    "archived": false
+   },
+   {
+    "repo": "x402-foundation/wg-identity",
+    "stars": 4,
+    "pushed": "2026-08-17",
+    "commits52w": 13,
+    "archived": false
+   }
+  ],
+  "UCP": [
+   {
+    "repo": "Universal-Commerce-Protocol/python-sdk",
+    "stars": 89,
+    "pushed": "2026-10-15",
+    "commits52w": 57,
+    "archived": false
+   },
+   {
+    "repo": "Universal-Commerce-Protocol/js-sdk",
+    "stars": 48,
+    "pushed": "2026-10-15",
+    "commits52w": 63,
+    "archived": false
+   },
+   {
+    "repo": "Universal-Commerce-Protocol/samples",
+    "stars": 240,
+    "pushed": "2026-10-16",
+    "commits52w": 146,
+    "archived": false
+   },
+   {
+    "repo": "Universal-Commerce-Protocol/conformance",
+    "stars": 29,
+    "pushed": "2026-09-07",
+    "commits52w": 63,
+    "archived": false
+   },
+   {
+    "repo": "Universal-Commerce-Protocol/ucp-schema",
+    "stars": 11,
+    "pushed": "2026-10-16",
+    "commits52w": 55,
+    "archived": false
+   }
+  ],
+  "MPP": [
+   {
+    "repo": "tempoxyz/mpp-specs",
+    "stars": 95,
+    "pushed": "2026-10-15",
+    "commits52w": 99,
+    "archived": false
+   }
+  ],
+  "L402": [
+   {
+    "repo": "lightninglabs/L402",
+    "stars": 91,
+    "pushed": "2026-06-09",
+    "commits52w": 12,
+    "archived": false
+   },
+   {
+    "repo": "lightninglabs/lightning-agent-tools",
+    "stars": 60,
+    "pushed": "2026-05-29",
+    "commits52w": 45,
+    "archived": false
+   }
+  ],
+  "ANS": [
+   {
+    "repo": "agentnameservice/ans-registry",
+    "stars": 33,
+    "pushed": "2026-10-15",
+    "commits52w": 30,
+    "archived": false
+   }
+  ],
+  "PAP": [
+   {
+    "repo": "datalayer/personal-agent-protocol",
+    "stars": 3,
+    "pushed": "2026-10-14",
+    "commits52w": 162,
+    "archived": false
+   },
+   {
+    "repo": "richardanaya/pi-poppy",
+    "stars": 1,
+    "pushed": "2026-10-10",
+    "commits52w": 5,
+    "archived": false
+   },
+   {
+    "repo": "akshay5995/poppyseed",
+    "stars": 0,
+    "pushed": "2026-10-15",
+    "commits52w": 9,
+    "archived": false
+   }
+  ],
+  "x401": [
+   {
+    "repo": "proof/x401-node",
+    "stars": 3,
+    "pushed": "2026-10-14",
+    "commits52w": 33,
+    "archived": false
+   },
+   {
+    "repo": "proof/x401-ruby",
+    "stars": 0,
+    "pushed": "2026-10-05",
+    "commits52w": null,
+    "archived": false
+   }
+  ],
+  "KYAPay": [
+   {
+    "repo": "skyfire-xyz/kyapay_a2a",
+    "stars": 3,
+    "pushed": "2026-10-06",
+    "commits52w": 49,
+    "archived": false
+   }
+  ],
+  "cheqd": [
+   {
+    "repo": "cheqd/sdk",
+    "stars": 8,
+    "pushed": "2026-06-17",
+    "commits52w": 66,
+    "archived": false
+   },
+   {
+    "repo": "cheqd/did-provider-cheqd",
+    "stars": 8,
+    "pushed": "2026-03-23",
+    "commits52w": 56,
+    "archived": false
+   }
+  ]
+ },
+ "other_packages": [
+  {
+   "protocol": "MCP",
+   "package": "mcp",
+   "registry": "PyPI",
+   "monthly": 235193557
+  },
+  {
+   "protocol": "A2A",
+   "package": "a2a-sdk",
+   "registry": "PyPI",
+   "monthly": 11359775
+  },
+  {
+   "protocol": "x402",
+   "package": "@x402/core",
+   "registry": "npm",
+   "monthly": 1507084
+  },
+  {
+   "protocol": "x402",
+   "package": "@x402/fetch",
+   "registry": "npm",
+   "monthly": 552054
+  },
+  {
+   "protocol": "x402",
+   "package": "x402",
+   "registry": "PyPI",
+   "monthly": 204765
+  },
+  {
+   "protocol": "UCP",
+   "package": "ucp-sdk",
+   "registry": "PyPI",
+   "monthly": 8621
+  },
+  {
+   "protocol": "KYA-OS",
+   "package": "@kya-os/mcp-i",
+   "registry": "npm",
+   "monthly": 16007
+  },
+  {
+   "protocol": "cheqd",
+   "package": "@cheqd/sdk",
+   "registry": "npm",
+   "monthly": 3440
+  },
+  {
+   "protocol": "cheqd",
+   "package": "@cheqd/did-provider-cheqd",
+   "registry": "npm",
+   "monthly": 864
+  }
+ ]
 }

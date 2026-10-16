@@ -32,9 +32,99 @@ text{{font-family:{FONT};fill:var(--ink2)}}
 .grid{{stroke:var(--grid);stroke-width:1}}
 .axis{{stroke:var(--axis);stroke-width:1}}
 .ln{{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}}
+.nd{{fill:none;stroke:var(--axis);stroke-width:1.5;stroke-dasharray:5 4}}
+.ndt{{font-size:11px;font-style:italic;fill:var(--ink3)}}
 .hit{{fill:transparent}}
 .hit:hover{{fill:var(--ink);fill-opacity:.15}}
 {extra}</style>'''
+
+
+# Protocols with no series in a chart, and why. Shown as dashed "no data" markers rather than silently omitted.
+NOT_PUBLIC = 'Closed commercial product: no public repository or package'
+NO_NPM = [
+    ('Baselayer KYA', NOT_PUBLIC),
+    ('AP2', 'Not collected: no official npm package identified'),
+    ('ACP', 'Not collected: no official npm package identified'),
+    ('TAP', 'Not collected: no official npm package identified'),
+    ('L402', 'Not collected: no official npm package identified'),
+    ('ANS', 'Not collected: no official npm package identified'),
+    ('PAP (Poppy)', 'Not collected: no package identified (spec and site only)'),
+    ('KYAPay', 'Not collected: package not identified'),
+    ('cheqd', 'Data exists (1.2K a week) but not plotted: the palette allows eight series'),
+]
+
+
+# Charted repository is an SDK or implementation, not the protocol's specification repository.
+PROXY = {
+    'MPP': 'wevm/mppx, the TypeScript SDK. The specification repository, tempoxyz/mpp-specs, is not charted.',
+    'L402': 'lightninglabs/aperture, a reference implementation. The specification repository, lightninglabs/L402, is not charted.',
+    'ANS': 'agentnameservice/ans, a Go reference implementation whose operator is unconfirmed. The IETF draft has no repository.',
+    'Web Bot Auth': 'cloudflare/web-bot-auth, Cloudflare\'s implementation. The IETF draft is not charted.',
+    'cheqd': 'cheqd/did-resolver, one cheqd repository. The cheqd network and other repositories are not charted.',
+}
+
+
+def star(n):
+    return n + ('*' if n in PROXY else '')
+
+
+def foot(x, y, lines):
+    return ''.join(f'<text class="ax" x="{x}" y="{y+i*14}">{esc(t)}</text>' for i, t in enumerate(lines))
+
+
+def short(repo):
+    return repo.split('/')[1]
+
+
+def wrap(text, n=135, indent='   '):
+    cur, out = '', []
+    for w in text.split(', '):
+        add = (', ' if cur else '') + w
+        if cur and len(cur) + len(add) > n:
+            out.append(cur + ',')
+            cur = indent + w
+        else:
+            cur += add
+    return out + [cur]
+
+
+def others_lines(metric):
+    out = []
+    for proto, repos in D.get('others', {}).items():
+        key = (lambda r: -r['stars']) if metric == 'stars' else (lambda r: -(r['commits52w'] or 0))
+        parts = []
+        for r in sorted(repos, key=key):
+            v = r['stars'] if metric == 'stars' else r['commits52w']
+            parts.append(f"{short(r['repo'])} {'n/a' if v is None else format(v, ',')}")
+        out += wrap(f'{proto}: ' + ', '.join(parts))
+    return out
+
+
+def package_lines():
+    by = {}
+    for p in D.get('other_packages', []):
+        by.setdefault(p['protocol'], []).append(f"{p['package']} ({p['registry']}) {fmt(p['monthly'])}")
+    out = []
+    for proto, items in by.items():
+        out += wrap(f'{proto}: ' + ', '.join(items))
+    return out
+
+
+def nc_height(sections):
+    return 34 + sum(15 + 14 * len(lines) + 10 for _, lines in sections) + 6
+
+
+def nc_box(x, y, w, sections):
+    out = [f'<rect class="nd" x="{x}" y="{y}" width="{w}" height="{nc_height(sections)}" rx="6"/>',
+           f'<text class="lab" x="{x+12}" y="{y+20}" style="font-weight:700">Not covered by this chart</text>']
+    yy = y + 44
+    for heading, lines in sections:
+        out.append(f'<text class="val" x="{x+12}" y="{yy}" style="font-weight:700;fill:var(--ink)">{esc(heading)}</text>')
+        for i, t in enumerate(lines):
+            lead = len(t) - len(t.lstrip(' '))
+            out.append(f'<text class="ndt" x="{x+12}" y="{yy+15+i*14}" style="font-style:normal">{esc(chr(160)*lead + t.lstrip(" "))}</text>')
+        yy += 15 + 14 * len(lines) + 10
+    return ''.join(out)
 
 
 def esc(s):
@@ -68,9 +158,15 @@ def nudge(ys, gap):
 # ---------------------------------------------------------------- chart 1: npm downloads over time
 def chart_npm():
     names = ['MCP', 'A2A', 'x402', 'MPP', 'Web Bot Auth', 'UCP', 'KYA-OS', 'x401']
-    W, H = 960, 610
-    L, R, T, B = 64, 190, 112, 62
-    pw, ph = W - L - R, H - T - B
+    W = 960
+    L, R, T = 64, 190, 112
+    ph = 436
+    secs = [('Protocols with no download series', [f'{n}: {why}' for n, why in NO_NPM]),
+            ('Other packages, with downloads in the last month', package_lines()),
+            ('Not measured', ['Maven, NuGet, Go modules, crates.io, RubyGems and any other registry, and packages whose name I could not identify.'])]
+    hbox = nc_height(secs)
+    H = T + ph + 40 + hbox + 22 + 28 + 10 + 28 + 14
+    pw = W - L - R
     d0 = dt.date(2025, 4, 21)
     d1 = dt.date(2026, 10, 5)
     span = (d1 - d0).days
@@ -84,7 +180,7 @@ def chart_npm():
 
     b = []
     b.append(f'<text class="t" x="{L}" y="30">Weekly npm downloads of each protocol\'s main SDK</text>')
-    b.append(f'<text class="sub" x="{L}" y="50">Log scale, 21 Apr 2025 to 5 Oct 2026. Downloads include CI and mirrors, so read them as relative reach, not users.</text>')
+    b.append(f'<text class="sub" x="{L}" y="50">Log scale, 21 Apr 2025 to 5 Oct 2026. Each line starts at the first week with downloads. Downloads include CI and mirrors.</text>')
     # legend
     lx = L
     for i, n in enumerate(names):
@@ -118,10 +214,14 @@ def chart_npm():
         b.append(f'<path d="M{x+3:.1f},{y:.1f} L{lxp-3},{y2:.1f}" style="stroke:var(--s{i+1});stroke-width:1;fill:none"/>'
                  f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.5" style="fill:var(--s{i+1});stroke:var(--surface);stroke-width:2"/>'
                  f'<text class="lab" x="{lxp}" y="{y2+4:.1f}">{esc(n)} <tspan class="val">{fmt(v)}</tspan></text>')
+    ny = T + ph + 40
+    b.append(nc_box(L, ny, pw + R - 24, secs))
+    b.append(foot(L, ny + hbox + 22, ['One package per protocol is plotted. The window opens 21 Apr 2025, so earlier history for MCP, x402 and Web Bot Auth is not shown.',
+                                       'Each line starts at the first week with downloads.']))
     half = len(names) // 2
     for k, grp in enumerate((names[:half], names[half:])):
         pkgs = '; '.join(f'{n}: {D["npm"][n]["pkg"]}' for n in grp)
-        b.append(f'<text class="ax" x="{L}" y="{H-26+k*14}">{"Packages: " if k == 0 else ""}{esc(pkgs)}</text>')
+        b.append(f'<text class="ax" x="{L}" y="{ny+hbox+22+38+k*14}">{"Packages: " if k == 0 else ""}{esc(pkgs)}</text>')
     return svg(W, H, ''.join(b), 'Weekly npm downloads of each protocol main SDK',
                'Line chart on a log scale. ' + '; '.join(f'{n} {fmt(D["npm"][n]["weeks"][-1][1])} a week' for n in names))
 
@@ -129,24 +229,39 @@ def chart_npm():
 # ---------------------------------------------------------------- chart 2: weekly commits, small multiples
 def chart_commits():
     items = sorted(D['commits'].items(), key=lambda kv: -sum(v for _, v in kv[1]))
+    items.append(('Baselayer KYA', None))  # no public repository
     cols, pw, ph = 5, 160, 70
     gx, gy = 28, 46
     L, T = 40, 124
     rows = math.ceil(len(items) / cols)
     W = L * 2 + cols * pw + (cols - 1) * gx
-    H = T + rows * (ph + gy) + 30
-    ymax = max(v for _, wk in items for _, v in wk)
+    secs = [('Protocols with no panel', ['Baselayer KYA: closed commercial product, no public repository.']),
+            ('Other repositories, with commits in the last 52 weeks', others_lines('commits')),
+            ('Counting', ['Default branch only. Forks, other branches and private repositories are not counted.'])]
+    hbox = nc_height(secs)
+    H = T + rows * (ph + gy) + 14 + 14 * (len(PROXY) + 1) + 16 + hbox + 24
+    ymax = max(v for _, wk in items if wk for _, v in wk)
     ymax = int(math.ceil(ymax / 10.0) * 10)
     b = [f'<text class="t" x="{L}" y="30">Weekly commits to each protocol\'s main repository</text>',
          f'<text class="sub" x="{L}" y="50">Last 52 weeks to mid-Oct 2026. Same scale in every panel (0 to {ymax}), sorted by total commits.</text>',
-         f'<text class="sub" x="{L}" y="68">A flat line on the baseline means no recent development. Repositories created during the year start part-way along.</text>']
+         f'<text class="sub" x="{L}" y="68">A flat line on the baseline means no commits. Dashed shading means the repository did not exist yet. * marks an SDK or implementation repository (see below).</text>']
     for k, (n, wk) in enumerate(items):
         c, r = k % cols, k // cols
         x0 = L + c * (pw + gx)
         y0 = T + r * (ph + gy)
+        if wk is None:
+            b.append(f'<text class="lab" x="{x0}" y="{y0-18}" style="font-weight:700">{esc(n)}</text>'
+                     f'<rect class="nd" x="{x0}" y="{y0}" width="{pw}" height="{ph}" rx="4"/>'
+                     f'<text class="ndt" x="{x0+pw/2}" y="{y0+ph/2-3}" text-anchor="middle">No data</text>'
+                     f'<text class="ndt" x="{x0+pw/2}" y="{y0+ph/2+12}" text-anchor="middle">closed product, no public repo</text>')
+            continue
         tot = sum(v for _, v in wk)
-        b.append(f'<text class="lab" x="{x0}" y="{y0-18}" style="font-weight:700">{esc(n)}</text>'
-                 f'<text class="val" x="{x0+pw}" y="{y0-18}" text-anchor="end">{tot:,} commits</text>')
+        created = dt.date.fromisoformat(D['repos'][n]['created'])
+        cut = 0
+        while cut < len(wk) and dt.datetime.utcfromtimestamp(wk[cut][0]).date() + dt.timedelta(days=7) <= created:
+            cut += 1
+        b.append(f'<text class="lab" x="{x0}" y="{y0-18}" style="font-weight:700">{esc(star(n))}</text>'
+                 f'<text class="val" x="{x0+pw}" y="{y0-18}" text-anchor="end">{tot:,} commit{"" if tot == 1 else "s"}</text>')
         b.append(f'<line class="grid" x1="{x0}" x2="{x0+pw}" y1="{y0}" y2="{y0}"/>'
                  f'<line class="axis" x1="{x0}" x2="{x0+pw}" y1="{y0+ph}" y2="{y0+ph}"/>')
         if c == 0:
@@ -155,25 +270,41 @@ def chart_commits():
         n_w = len(wk)
         px = lambda i: x0 + pw * i / (n_w - 1)
         py = lambda v: y0 + ph * (1 - v / ymax)
-        path = 'M' + ' L'.join(f'{px(i):.1f},{py(v):.1f}' for i, (_, v) in enumerate(wk))
-        area = path + f' L{px(n_w-1):.1f},{y0+ph} L{px(0):.1f},{y0+ph} Z'
-        b.append(f'<path d="{area}" style="fill:var(--s1);fill-opacity:.18"/>'
-                 f'<path class="ln" style="stroke:var(--s1)" d="{path}"/>')
+        if cut > 0:
+            xc = px(min(cut, n_w - 1))
+            b.append(f'<rect class="nd" x="{x0}" y="{y0}" width="{xc-x0:.1f}" height="{ph}" rx="3"/>')
+            if xc - x0 >= 56:
+                b.append(f'<text class="ndt" x="{(x0+xc)/2:.1f}" y="{y0+ph/2+4:.1f}" text-anchor="middle">created {created.strftime("%b %Y")}</text>')
+        live = list(enumerate(wk))[cut:]
+        if len(live) > 1:
+            path = 'M' + ' L'.join(f'{px(i):.1f},{py(v):.1f}' for i, (_, v) in live)
+            area = path + f' L{px(live[-1][0]):.1f},{y0+ph} L{px(live[0][0]):.1f},{y0+ph} Z'
+            b.append(f'<path d="{area}" style="fill:var(--s1);fill-opacity:.18"/>'
+                     f'<path class="ln" style="stroke:var(--s1)" d="{path}"/>')
         for i, (ts, v) in enumerate(wk):
             day = dt.datetime.utcfromtimestamp(ts).date().isoformat()
-            b.append(f'<rect class="hit" x="{px(i)-pw/n_w/2:.1f}" y="{y0}" width="{pw/n_w:.1f}" height="{ph}"><title>{esc(n)}: {v} commits, week of {day}</title></rect>')
+            msg = f'{n}: repository not yet created (created {created.isoformat()})' if i < cut else f'{n}: {v} commits, week of {day}'
+            b.append(f'<rect class="hit" x="{px(i)-pw/n_w/2:.1f}" y="{y0}" width="{pw/n_w:.1f}" height="{ph}"><title>{esc(msg)}</title></rect>')
+    fy = T + rows * (ph + gy) + 14
+    b.append(foot(L, fy, ['* Charted repository is an SDK or implementation, not the specification:'] +
+                  [f'   {k}: {v}' for k, v in PROXY.items()]))
+    b.append(nc_box(L, fy + 14 * (len(PROXY) + 1) + 16, W - 2 * L, secs))
     return svg(W, H, ''.join(b), 'Weekly commits to each protocol main repository',
-               'Small multiples, one panel per repository, shared scale. ' + '; '.join(f'{n} {sum(v for _, v in wk)} commits' for n, wk in items))
+               'Small multiples, one panel per repository, shared scale. ' + '; '.join(f'{n} {sum(v for _, v in wk)} commits' for n, wk in items if wk) + '; Baselayer KYA has no data (closed product)')
 
 
 # ---------------------------------------------------------------- chart 3: stars snapshot dot plot
 def chart_stars():
     items = sorted(D['repos'].items(), key=lambda kv: -kv[1]['stars'])
+    items.append(('Baselayer KYA', None))  # no public repository
     quiet = {n for n, wk in D['commits'].items() if sum(v for _, v in wk[-13:]) == 0}
     W = 960
     L, R, T = 150, 250, 100
     rh = 28
-    H = T + len(items) * rh + 56
+    secs = [('Protocols with no data', ['Baselayer KYA: closed commercial product, no public repository.']),
+            ('Other repositories, with stars', ['One repository is charted per protocol. The MCP Python and TypeScript SDKs hold more stars than the specification repository charted.'] + others_lines('stars'))]
+    hbox = nc_height(secs)
+    H = T + len(items) * rh + 40 + 14 * (len(PROXY) + 1) + 16 + hbox + 24
     pw = W - L - R
     lo, hi = 1, 5  # 10 .. 100K
 
@@ -189,15 +320,22 @@ def chart_stars():
                  f'<text class="ax" x="{x:.1f}" y="{T+len(items)*rh+16}" text-anchor="middle">{fmt(10**k)}</text>')
     for i, (n, r) in enumerate(items):
         y = T + i * rh + rh / 2
+        if r is None:
+            b.append(f'<text class="lab" x="{L-12}" y="{y+4:.1f}" text-anchor="end">{esc(n)}</text>'
+                     f'<rect class="nd" x="{L+8}" y="{y-10:.1f}" width="{pw-16}" height="20" rx="4"/>'
+                     f'<text class="ndt" x="{L+20}" y="{y+4:.1f}">No data: closed commercial product, no public repository</text>')
+            continue
         hollow = n in quiet
         fill = 'var(--surface)' if hollow else 'var(--s1)'
-        b.append(f'<text class="lab" x="{L-12}" y="{y+4:.1f}" text-anchor="end">{esc(n)}</text>'
+        b.append(f'<text class="lab" x="{L-12}" y="{y+4:.1f}" text-anchor="end">{esc(star(n))}</text>'
                  f'<circle cx="{X(r["stars"]):.1f}" cy="{y:.1f}" r="6" style="fill:{fill};stroke:var(--s1);stroke-width:2">'
                  f'<title>{esc(n)} ({esc(r["repo"])}): {r["stars"]:,} stars, {r["forks"]:,} forks, created {r["created"]}, last push {r["pushed"]}</title></circle>'
                  f'<text class="val" x="{X(r["stars"])+12:.1f}" y="{y+4:.1f}">{r["stars"]:,}  ·  created {dt.date.fromisoformat(r["created"]).strftime("%b %Y")}</text>')
-    b.append(f'<text class="ax" x="{L-110}" y="{H-12}">MPP is the wevm/mppx SDK, L402 is lightninglabs/aperture and cheqd is cheqd/did-resolver. Others are the protocol repository.</text>')
+    b.append(foot(L-110, T + len(items) * rh + 40, ['* Charted repository is an SDK or implementation, not the specification:'] +
+                  [f'   {k}: {v}' for k, v in PROXY.items()]))
+    b.append(nc_box(L - 110, T + len(items) * rh + 40 + 14 * (len(PROXY) + 1) + 16, W - 2 * (L - 110), secs))
     return svg(W, H, ''.join(b), 'GitHub stars on each protocol main repository',
-               'Dot plot on a log scale. ' + '; '.join(f'{n} {r["stars"]:,}' for n, r in items))
+               'Dot plot on a log scale. ' + '; '.join(f'{n} {r["stars"]:,}' for n, r in items if r) + '; Baselayer KYA has no data (closed product)')
 
 
 if __name__ == '__main__':

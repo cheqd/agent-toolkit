@@ -83,9 +83,19 @@ Three charts, drawn from the data in the metrics table. They follow the system l
 
 **Stars.** A2A leads, then MCP, x402, UCP and AP2. AP2 and ACP hold thousands of stars with no recent commits, so their attention has outrun their activity. Hollow dots mark repositories with no commits in the last 13 weeks.
 
-**Not shown:** star history over time. GitHub's stargazer endpoints returned nothing in this environment, so stars appear only as a snapshot. SDK downloads exist only for npm packages, so AP2, ACP, TAP, L402 and ANS have no line in the first chart.
+**No data is marked, not hidden.** Dashed boxes and rows show where a protocol has no series, with the reason. Baselayer KYA is a closed commercial product, so it has no repository or package on any chart. Protocols without an official npm package identified (AP2, ACP, TAP, L402, ANS, PAP, KYAPay) are listed under "No download series". cheqd has download data but is not plotted, because the palette allows eight series. "Not collected" means none was found, not that none exists.
 
-Refresh with `python3 traction/fetch.py` (needs `gh` logged in), then `python3 traction/render.py`. The data behind the charts is in [`traction/data.json`](./traction/data.json).
+### Other gaps marked on the charts
+
+- **Each chart ends with a "Not covered by this chart" box.** It lists the protocols with no data and the other repositories or packages that are not charted, with their stars, commits or downloads. Only one repository and one package is charted per protocol, and others can be larger: the MCP Python and TypeScript SDK repositories hold more stars than the specification repository charted (24,593 and 13,590 against 9,458), and `a2a-sdk` on PyPI has about 11.4M downloads a month against 15.4M for the npm package charted.
+- **Repository did not exist yet.** In the commits chart, dashed shading marks weeks before a repository was created (KYA-OS, UCP, MPP, ANS, x401, PAP), so a flat line means no commits rather than no repository.
+- **SDK or implementation repository charted, not the specification.** An asterisk marks MPP (`wevm/mppx`), L402 (`lightninglabs/aperture`), ANS (`agentnameservice/ans`), Web Bot Auth (`cloudflare/web-bot-auth`) and cheqd (`cheqd/did-resolver`). Each footnote names what is not charted.
+- **One package per protocol** in the downloads chart. x402 also publishes `@x402/core` and KYA-OS also publishes `@kya-os/mcp-i`.
+- **Window cut-off.** The downloads window opens 21 Apr 2025, so earlier history for MCP, x402 and Web Bot Auth is not shown.
+
+**Not shown:** star history over time. GitHub's stargazer endpoints returned nothing in this environment, so stars appear only as a snapshot. SDK downloads exist only for npm packages, so those protocols have no line in the first chart.
+
+The lists of other repositories and packages are set in `OTHERS` and `OTHER_PACKAGES` in `traction/fetch.py`. Refresh with `python3 traction/fetch.py` (needs `gh` logged in), then `python3 traction/render.py`. The data behind the charts is in [`traction/data.json`](./traction/data.json).
 
 ## Notes
 
