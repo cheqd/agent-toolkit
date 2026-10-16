@@ -15,6 +15,10 @@ The same data produces two versions:
 
 `--no-cheqd` removes the cheqd chips, drops the capabilities only cheqd covered, and omits the Trust anchor row. `--without PROTOCOL` and `--skip-row ROW` do the same for other protocols and rows.
 
+## Protocols and traction
+
+[`PROTOCOLS.md`](./PROTOCOLS.md) lists every protocol on the map with its steward, documentation, adoption signals and GitHub and package metrics. [`traction/`](./traction/) holds the data and scripts behind its charts: `python3 traction/fetch.py` refreshes `data.json` (needs `gh`), and `python3 traction/render.py` redraws the SVGs.
+
 ## Run
 
 ```bash
@@ -30,15 +34,15 @@ Any headless Chromium works. For example, with Chrome on macOS:
 
 ```bash
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless \
-  --hide-scrollbars --force-device-scale-factor=2 --window-size=1610,1090 \
+  --hide-scrollbars --force-device-scale-factor=2 --window-size=1610,1170 \
   --screenshot=protocol-capability-map.png file://$PWD/capability-map.html
 ```
 
-The window size fits the current content. Use a height of 960 instead of 1090 for the `--no-cheqd` version, and change it if you add rows. The half-circle glyph is set in DejaVu Sans; if your machine lacks it, the glyph falls back to a system font and may look smaller.
+The window size fits the current content. Use a height of 1020 instead of 1170 for the `--no-cheqd` version, and change it if you add rows. The half-circle glyph is set in DejaVu Sans; if your machine lacks it, the glyph falls back to a system font and may look smaller.
 
 ## Provisional protocols
 
-Protocols in the `PROVISIONAL` set at the top of `generate.py` (currently PAP) render with dashed chips, and a box owned only by provisional protocols gets a dotted purple border. Use it for protocols whose specification is unpublished or rated from secondary sources, and remove the protocol from the set once its specification has been checked.
+Protocols in the `PROVISIONAL` set at the top of `generate.py` (currently none) render with dashed chips, and a box owned only by provisional protocols gets a dotted purple border. Use it for protocols whose specification is unpublished or rated from secondary sources, and remove the protocol from the set once its specification has been checked.
 
 ## Limits
 

@@ -24,11 +24,13 @@ import html
 # protocol -> colour
 COL={'A2A':'#2f7fd1','KYA-OS':'#e0782a','AP2':'#2e9e6b','x402':'#8a56c2','MPP':'#c2398a','L402':'#b8960b','cheqd':'#1b8a8a',
      'ACP':'#6b7a8f','TAP':'#6b7a8f','KYAPay':'#c4572d','Baselayer':'#6b7a8f','MCP':'#2f7fd1',
-     'UCP':'#8c5a2b','PAP':'#4f46e5','ANS':'#0f7fa6','WebBotAuth':'#7a4a2a'}
-LABEL={'WebBotAuth':'Web Bot Auth'}
-# Protocols whose ratings are provisional (specification unpublished or rated from secondary sources).
+     'UCP':'#8c5a2b','PAP':'#4f46e5','ANS':'#0f7fa6','WebBotAuth':'#7a4a2a','x401':'#b3261e'}
+LABEL={'WebBotAuth':'Web Bot Auth','PAP':'PAP (Poppy)'}
+# Protocols whose ratings are provisional (rated from announcements, not the specification text).
+# None at present. PAP (Poppy) is rated from draft 0.1 (docs/spec, 15 Oct 2026); x401 from draft 0.2.0
+# (github.com/proof/x401, key sections read). Both are drafts and can change incompatibly.
 # Their chips render dashed, and a box owned only by provisional protocols gets a dotted border.
-PROVISIONAL={'PAP'}
+PROVISIONAL=set()
 # (name, [(proto, level)], note)  level: F full, P partial
 def cap(name, owners, gap=False): return dict(name=name, owners=owners, gap=gap)
 ROWS=[
@@ -48,16 +50,17 @@ ROWS=[
  ("Identity and delegation", [
    ("Agent identity", [
      cap("Agent identity credential",[('KYA-OS','F'),('KYAPay','F'),('Baselayer','F'),('ANS','F'),('PAP','P')]),
-     cap("Holder-of-key binding",[('KYA-OS','F'),('AP2','P'),('WebBotAuth','P')]),
-     cap("Owner and deployer verification",[('Baselayer','F'),('KYAPay','F'),('ANS','P')])]),
+     cap("Holder-of-key binding",[('KYA-OS','F'),('PAP','F'),('AP2','P'),('WebBotAuth','P'),('x401','P')]),
+     cap("Owner and deployer verification",[('Baselayer','F'),('KYAPay','F'),('ANS','P'),('x401','P')])]),
    ("Delegation", [
-     cap("Human-to-agent authority",[('KYA-OS','F'),('AP2','P'),('PAP','P')]),
+     cap("Human-to-agent authority",[('KYA-OS','F'),('PAP','F'),('AP2','P'),('x401','P')]),
      cap("Agent-to-agent delegation chain",[('KYA-OS','F')])]),
    ("Request proof", [
-     cap("Per-request proof",[('KYA-OS','F'),('WebBotAuth','F'),('x402','P'),('L402','P')]),
+     cap("Per-request proof",[('KYA-OS','F'),('WebBotAuth','F'),('PAP','F'),('x401','P'),('x402','P'),('L402','P')]),
      cap("Response proof",[('KYA-OS','P')]),
-     cap("Replay protection",[('KYA-OS','F'),('x402','P'),('WebBotAuth','P')]),
-     cap("Signing key directory",[('WebBotAuth','F')])]),
+     cap("Replay protection",[('KYA-OS','F'),('PAP','F'),('x401','P'),('x402','P'),('WebBotAuth','P')]),
+     cap("Signing key directory",[('WebBotAuth','F'),('PAP','P')]),
+     cap("Verifier-defined credential requirement",[('x401','F')])]),
  ]),
  ("Business-facing", [
    ("Access and visibility", [
@@ -65,7 +68,7 @@ ROWS=[
      cap("Agent identified to the business",[('PAP','F'),('UCP','P')]),
      cap("Business-side visibility of agent activity",[('PAP','F')])]),
    ("Commerce session", [
-     cap("Business capability discovery",[('UCP','F'),('PAP','P')]),
+     cap("Business capability discovery",[('UCP','F'),('PAP','F')]),
      cap("Checkout and order semantics",[('UCP','F'),('ACP','F')])]),
  ]),
  ("Discovery and transport", [
@@ -76,9 +79,9 @@ ROWS=[
      cap("Agent Card signature",[('A2A','P')]),
      cap("Skill and capability attestation",[],True)]),
    ("Interaction", [
-     cap("Messages and tasks",[('A2A','F')]),
+     cap("Messages and tasks",[('A2A','F'),('PAP','P')]),
      cap("Tool and data access",[('MCP','F')]),
-     cap("Extension negotiation",[('A2A','F')])]),
+     cap("Extension negotiation",[('A2A','F'),('PAP','P')])]),
  ]),
  ("Trust anchor", [
    ("Resolution and linkage", [
@@ -86,7 +89,7 @@ ROWS=[
      cap("Reciprocal did:web and did:cheqd linkage",[('cheqd','F')]),
      cap("Versioned policy artefacts",[('cheqd','F')])]),
    ("Status", [
-     cap("Credential status and revocation",[('cheqd','F'),('KYA-OS','P'),('ANS','P')]),
+     cap("Credential status and revocation",[('cheqd','F'),('KYA-OS','P'),('ANS','P'),('PAP','P'),('x401','P')]),
      cap("Trust registry standing",[('cheqd','F')]),
      cap("Append-only transparency log",[('ANS','F')])]),
  ]),
@@ -136,7 +139,8 @@ rows=''
 for rname, groups in ROWS:
     g=''.join(f'<div class="grp"><div class="gt">{html.escape(gn)}</div><div class="caps">{"".join(box(c) for c in cs)}</div></div>' for gn,cs in groups)
     rows+=f'<div class="row"><div class="rl">{html.escape(rname)}</div><div class="groups">{g}</div></div>'
-legend=''.join(f'<span class="chip" style="--c:{COL[p]}">{LABEL.get(p,p)}</span>' for p in ['A2A','MCP','KYA-OS','KYAPay','ANS','WebBotAuth','AP2','x402','MPP','L402','UCP','cheqd'] if p in COL)+'<span class="chip" style="--c:#6b7a8f">ACP / TAP / Baselayer</span>'+'<span class="chip prov" style="--c:#4f46e5">PAP</span>'
+legend=''.join(f'<span class="chip" style="--c:{COL[p]}">{LABEL.get(p,p)}</span>' for p in ['A2A','MCP','KYA-OS','KYAPay','ANS','WebBotAuth','AP2','x402','MPP','L402','x401','PAP','UCP','cheqd'] if p in COL)+'<span class="chip" style="--c:#6b7a8f">ACP / TAP / Baselayer</span>'+''
+PROV_KEY='<span class="k" style="background:#ebe9fb;border:3px dotted #4f46e5"></span>provisional (dashed chip = provisional protocol)' if PROVISIONAL else ''
 page=f'''<!doctype html><meta charset=utf-8><style>
 body{{margin:0;padding:24px;background:#fff;font-family:Helvetica,Arial,'DejaVu Sans',sans-serif;color:#222;width:1560px}}
 h1{{font-size:20px;margin:0 0 4px}} .sub{{font-size:12px;color:#555;margin-bottom:14px}}
@@ -162,14 +166,14 @@ h1{{font-size:20px;margin:0 0 4px}} .sub{{font-size:12px;color:#555;margin-botto
 .k{{display:inline-block;width:14px;height:14px;border-radius:3px;margin:0 3px 0 10px;vertical-align:middle}}
 </style>
 <h1>{html.escape(TITLE)}</h1>
-<div class="sub">Which protocol owns each capability. Red = two or more full owners (overlap). Amber = one owner plus partial coverage. Dashed = gap. Filled chip = owns, outlined chip with <span class=h>◐</span> = partial. Author's assessment, October 2026; payment-protocol details are from secondary sources. PAP (Personal Agent Protocol) is provisional: its v0.1 specification is unpublished and it is rated from press coverage. UCP is rated from Google's developer blog, not its specification.</div>
+<div class="sub">Which protocol owns each capability. Red = two or more full owners (overlap). Amber = one owner plus partial coverage. Dashed = gap. Filled chip = owns, outlined chip with <span class=h>◐</span> = partial. Author's assessment, October 2026; payment-protocol details are from secondary sources. PAP (Personal Agent Protocol, nicknamed Poppy, draft 0.1) and x401 (Proof, draft 0.2.0) are rated from their specification drafts, which can change incompatibly. UCP is rated from Google's developer blog, not its specification.</div>
 {rows}
 <div class="leg">{legend}
 <span class="k" style="background:#fde3d0;border:3px solid #d32f2f"></span>overlap (two or more full owners)
 <span class="k" style="background:#fff1d6;border:3px solid #e69500"></span>one owner plus partial coverage
 <span class="k" style="background:#f5dc9c;border:2px solid #444"></span>single owner
 <span class="k" style="background:#eee;border:2px dashed #888"></span>gap (no owner)
-<span class="k" style="background:#ebe9fb;border:3px dotted #4f46e5"></span>provisional (dashed chip = provisional protocol)</div>'''
+{PROV_KEY}</div>'''
 out=sys.argv[1] if len(sys.argv)>1 else 'capability-map.html'
 open(out,'w').write(page)
 print({k:len(v) for k,v in stats.items()})
