@@ -19,50 +19,70 @@ NPM = {'MCP': '@modelcontextprotocol/sdk', 'A2A': '@a2a-js/sdk', 'x402': 'x402',
 
 # Other repositories and packages for each protocol. They are not charted as series, but each chart lists them
 # under "Not covered by this chart" so the single repository or package plotted is not mistaken for the whole ecosystem.
-# 'first-party' repositories belong to the protocol's own organisation (or its named steward) and are added to the
-# protocol's commit series. 'community' repositories are third-party implementations: listed, not aggregated.
-FP, CM = 'first-party', 'community'
+# Official repositories belong to the protocol's own organisation or named steward. Third-party repositories are
+# hand-picked: for each protocol, up to three repositories that implement the protocol itself (an SDK, server,
+# library or plugin), highest stars first, after setting aside applications that merely use the protocol and
+# curated lists. GitHub has many more (see TOPICS), so these are examples, not a census.
+OFF, TP = 'official', 'third-party'
 OTHERS = {
-    'A2A': [('a2aproject/a2a-python', FP), ('a2aproject/a2a-js', FP), ('a2aproject/a2a-java', FP), ('a2aproject/a2a-go', FP),
-            ('a2aproject/a2a-dotnet', FP), ('a2aproject/a2a-rs', FP), ('a2aproject/a2a-samples', FP), ('a2aproject/a2a-inspector', FP)],
-    'MCP': [('modelcontextprotocol/typescript-sdk', FP), ('modelcontextprotocol/python-sdk', FP), ('modelcontextprotocol/java-sdk', FP),
-            ('modelcontextprotocol/go-sdk', FP), ('modelcontextprotocol/csharp-sdk', FP), ('modelcontextprotocol/rust-sdk', FP)],
-    'x402': [('x402-foundation/wg-identity', FP), ('google-agentic-commerce/a2a-x402', CM)],
-    'UCP': [('Universal-Commerce-Protocol/python-sdk', FP), ('Universal-Commerce-Protocol/js-sdk', FP),
-            ('Universal-Commerce-Protocol/samples', FP), ('Universal-Commerce-Protocol/conformance', FP),
-            ('Universal-Commerce-Protocol/ucp-schema', FP)],
-    'MPP': [('tempoxyz/mpp-specs', FP)],
-    'L402': [('lightninglabs/L402', FP), ('lightninglabs/lightning-agent-tools', FP)],
-    'ANS': [('agentnameservice/ans-registry', FP)],
-    'PAP': [('datalayer/personal-agent-protocol', CM), ('richardanaya/pi-poppy', CM), ('akshay5995/poppyseed', CM)],
-    'x401': [('proof/x401-node', FP), ('proof/x401-ruby', FP)],
-    'KYAPay': [('skyfire-xyz/kyapay_a2a', FP)],
+    'A2A': [('a2aproject/a2a-python', OFF), ('a2aproject/a2a-js', OFF), ('a2aproject/a2a-java', OFF), ('a2aproject/a2a-go', OFF),
+            ('a2aproject/a2a-dotnet', OFF), ('a2aproject/a2a-rs', OFF), ('a2aproject/a2a-samples', OFF), ('a2aproject/a2a-inspector', OFF),
+            ('pydantic/fasta2a', TP), ('qntx-labs/ra2a', TP), ('vishalmysore/a2ajava', TP)],
+    'MCP': [('modelcontextprotocol/typescript-sdk', OFF), ('modelcontextprotocol/python-sdk', OFF), ('modelcontextprotocol/java-sdk', OFF),
+            ('modelcontextprotocol/go-sdk', OFF), ('modelcontextprotocol/csharp-sdk', OFF), ('modelcontextprotocol/rust-sdk', OFF),
+            ('PrefectHQ/fastmcp', TP), ('mcp-use/mcp-use', TP), ('mark3labs/mcp-go', TP)],
+    'x402': [('x402-foundation/wg-identity', OFF), ('solana-foundation/pay', TP), ('x402-rs/x402-rs', TP),
+             ('google-agentic-commerce/a2a-x402', TP)],
+    'UCP': [('Universal-Commerce-Protocol/python-sdk', OFF), ('Universal-Commerce-Protocol/js-sdk', OFF),
+            ('Universal-Commerce-Protocol/samples', OFF), ('Universal-Commerce-Protocol/conformance', OFF),
+            ('Universal-Commerce-Protocol/ucp-schema', OFF), ('NVIDIA-AI-Blueprints/Retail-Agentic-Commerce', TP),
+            ('Shopify/ucp-cli', TP), ('magebitcom/magento2-universal-commerce-module', TP)],
+    'AP2': [('solana-foundation/pay', TP), ('vishalmysore/ap2java', TP)],
+    'ACP': [('NVIDIA-AI-Blueprints/Retail-Agentic-Commerce', TP), ('vercel/acp-handler', TP), ('nekuda-ai/ACP-Checkout-Gateway', TP)],
+    'TAP': [('inflowpayai/inflow-node', TP)],
+    'MPP': [('tempoxyz/mpp-specs', OFF), ('solana-foundation/pay', TP), ('faremeter/faremeter', TP)],
+    'L402': [('lightninglabs/L402', OFF), ('lightninglabs/lightning-agent-tools', OFF), ('l402-protocol/l402', TP),
+             ('ngx-l402/ngx-l402', TP), ('Fewsats/l402-python', TP)],
+    'Web Bot Auth': [('vestauth/vestauth', TP), ('TecharoHQ/samesame', TP), ('regent-protocol/regent-httpsig', TP)],
+    'x401': [('proof/x401-node', OFF), ('proof/x401-ruby', OFF), ('solidusnetwork/x401', TP), ('Shehryar/x401', TP)],
+    'ANS': [('agentnameservice/ans-registry', OFF), ('ruvnet/Agent-Name-Service', TP), ('1amageek/ans-sdk-swift', TP)],
+    'PAP': [('datalayer/personal-agent-protocol', TP), ('richardanaya/pi-poppy', TP), ('akshay5995/poppyseed', TP)],
+    'KYAPay': [('skyfire-xyz/kyapay_a2a', OFF), ('tollstile/Tollstile', TP)],
 }
-# Packages per protocol and registry. For each registry the package with the most downloads in the last four weeks
-# is charted (so a package and its dependencies are not both counted), and registries are added together.
-# Scope: first-party = the protocol's own organisation; vendor = built by a named partner for the protocol;
-# community = third-party implementation.
+# GitHub repositories tagged with each protocol's topic on 16 Oct 2026. Includes applications that only use the protocol.
+TOPICS = {'MCP': ('model-context-protocol', 37653), 'x402': ('x402', 3827), 'A2A': ('a2a-protocol', 604), 'L402': ('l402', 110),
+          'UCP': ('universal-commerce-protocol', 66), 'Web Bot Auth': ('web-bot-auth', 41), 'ACP': ('agentic-commerce-protocol', 27),
+          'AP2': ('agent-payments-protocol', 19)}
+# Packages per protocol, group and registry. For each registry and group the package with the most downloads in the last
+# four weeks is charted, so a package and its dependencies are not counted twice.
 PACKAGES = {
-    'A2A': {'npm': ['@a2a-js/sdk'], 'pypi': ['a2a-sdk'], 'crates': ['a2a-lf', 'a2a-pb']},
-    'MCP': {'npm': ['@modelcontextprotocol/sdk'], 'pypi': ['mcp'], 'crates': ['rmcp']},
-    'x402': {'npm': ['x402', '@x402/core', '@x402/extensions', '@x402/fetch', '@x402/mcp'], 'pypi': ['x402']},
-    'UCP': {'npm': ['@ucp-js/sdk'], 'pypi': ['ucp-sdk'], 'crates': ['ucp-schema']},
-    'MPP': {'npm': ['mppx'], 'pypi': ['pympp', 'pytempo']},
-    'Web Bot Auth': {'npm': ['web-bot-auth', 'http-message-sig', 'jsonwebkey-thumbprint'], 'crates': ['web-bot-auth']},
-    'KYA-OS': {'npm': ['@kya-os/mcp', '@kya-os/mcp-i']},
-    'x401': {'npm': ['@proof.com/x401-node']},
-    'PAP': {'npm': ['@datalayer/personal-agent-protocol', 'poppyseed'], 'pypi': ['personal-agent-protocol']},
-    'L402': {'npm': ['@lightninglabs/l402', '@lightninglabs/lightning-mcp-server'], 'pypi': ['l402']},
-    'ACP': {'npm': ['agentic-commerce-protocol'], 'pypi': ['agentic-commerce-protocol']},
-    'KYAPay': {'npm': ['@skyfire-xyz/skyfire-seller-sdk-node']},
+    'A2A': {OFF: {'npm': ['@a2a-js/sdk'], 'pypi': ['a2a-sdk'], 'crates': ['a2a-lf', 'a2a-pb']},
+            TP: {'pypi': ['fasta2a'], 'crates': ['ra2a']}},
+    'MCP': {OFF: {'npm': ['@modelcontextprotocol/sdk'], 'pypi': ['mcp'], 'crates': ['rmcp']},
+            TP: {'pypi': ['fastmcp'], 'npm': ['mcp-use']}},
+    'x402': {OFF: {'npm': ['x402', '@x402/core', '@x402/extensions', '@x402/fetch', '@x402/mcp'], 'pypi': ['x402']},
+             TP: {'crates': ['x402-types', 'x402-chain-eip155']}},
+    'UCP': {OFF: {'npm': ['@ucp-js/sdk'], 'pypi': ['ucp-sdk'], 'crates': ['ucp-schema']}, TP: {'npm': ['@shopify/ucp-cli']}},
+    'MPP': {OFF: {'npm': ['mppx'], 'pypi': ['pympp', 'pytempo']}, TP: {}},
+    'Web Bot Auth': {OFF: {'npm': ['web-bot-auth', 'http-message-sig', 'jsonwebkey-thumbprint'], 'crates': ['web-bot-auth']},
+                     TP: {'npm': ['vestauth', 'samesame'], 'pypi': ['regent-httpsig']}},
+    'KYA-OS': {OFF: {'npm': ['@kya-os/mcp', '@kya-os/mcp-i']}, TP: {}},
+    'x401': {OFF: {'npm': ['@proof.com/x401-node']}, TP: {'npm': ['@solidus-network/x401']}},
+    'PAP': {OFF: {}, TP: {'npm': ['@datalayer/personal-agent-protocol', 'poppyseed'], 'pypi': ['personal-agent-protocol']}},
+    'L402': {OFF: {'npm': ['@lightninglabs/l402', '@lightninglabs/lightning-mcp-server']}, TP: {'pypi': ['l402']}},
+    'ACP': {OFF: {}, TP: {'npm': ['agentic-commerce-protocol', 'acp-handler'], 'pypi': ['agentic-commerce-protocol']}},
+    'KYAPay': {OFF: {'npm': ['@skyfire-xyz/skyfire-seller-sdk-node']}, TP: {'npm': ['@tollstile/kyapay']}},
+    'TAP': {OFF: {}, TP: {'npm': ['@inflowpayai/tap-seller']}},
 }
-PACKAGE_SCOPE = {'poppyseed': 'community', '@datalayer/personal-agent-protocol': 'community', 'personal-agent-protocol': 'community',
-                 'l402': 'community', 'agentic-commerce-protocol': 'vendor (Svix)', '@skyfire-xyz/skyfire-seller-sdk-node': 'vendor (Skyfire)',
-                 'pympp': 'first-party (Tempo)', 'pytempo': 'first-party (Tempo)', 'mppx': 'vendor (wevm)'}
+# Publishers worth naming next to a charted package.
+PUBLISHER = {'fasta2a': 'Pydantic', 'agentic-commerce-protocol': 'Svix', 'acp-handler': 'Vercel', '@shopify/ucp-cli': 'Shopify',
+             'l402': 'Fewsats', '@datalayer/personal-agent-protocol': 'Datalayer', 'personal-agent-protocol': 'Datalayer',
+             'poppyseed': 'a community developer', '@inflowpayai/tap-seller': 'InFlow', '@tollstile/kyapay': 'Tollstile',
+             'mppx': 'wevm, with Tempo', 'pympp': 'Tempo', 'pytempo': 'Tempo', 'vestauth': 'the dotenv author', 'fastmcp': 'Prefect',
+             '@skyfire-xyz/skyfire-seller-sdk-node': 'Skyfire'}
 # Protocols where no package was found on npm, PyPI or crates.io, with what was checked.
-NO_PACKAGE = {'AP2': 'The ap2 package on PyPI belongs to an unrelated project; no official npm or crates.io package found',
-              'TAP': 'No package found on npm, PyPI or crates.io',
-              'ANS': 'No package found on npm, PyPI or crates.io (Go reference implementation)'}
+NO_PACKAGE = {'AP2': 'The ap2 package on PyPI belongs to an unrelated project; no other package found on npm, PyPI or crates.io',
+              'ANS': 'No package found on npm, PyPI or crates.io (Go reference implementation, Swift SDK)'}
 
 
 def gh(path):
@@ -92,9 +112,12 @@ def commits():
 
 
 def others():
-    out = {}
+    out, cache = {}, {}
     for proto, repos in OTHERS.items():
         for r, scope in repos:
+            if r in cache:  # a repository can serve several protocols (e.g. solana-foundation/pay)
+                out.setdefault(proto, []).append(dict(cache[r], scope=scope))
+                continue
             j = gh(f'repos/{r}')
             if not j or 'stargazers_count' not in j:
                 continue
@@ -105,9 +128,10 @@ def others():
                     weeks = [(w['week'], w['total']) for w in d]
                     break
                 time.sleep(3)
-            out.setdefault(proto, []).append(dict(
-                repo=r, scope=scope, stars=j['stargazers_count'], created=j['created_at'][:10], pushed=j['pushed_at'][:10],
-                commits52w=sum(v for _, v in weeks) if weeks else None, weeks=weeks, archived=j['archived']))
+            rec = dict(repo=r, stars=j['stargazers_count'], created=j['created_at'][:10], pushed=j['pushed_at'][:10],
+                       commits52w=sum(v for _, v in weeks) if weeks else None, weeks=weeks, archived=j['archived'])
+            cache[r] = rec
+            out.setdefault(proto, []).append(dict(rec, scope=scope))
     return out
 
 
@@ -117,7 +141,7 @@ def _week_starts(n=12):
     return [end - dt.timedelta(days=7 * i + 6) for i in range(n - 1, -1, -1)]
 
 
-def _daily(registry, name):
+def _daily_once(registry, name):
     """Daily downloads for one package: {iso date: n}. npm 540 days, PyPI about 180, crates.io 90."""
     q = name.replace('/', '%2F')
     try:
@@ -140,24 +164,37 @@ def _daily(registry, name):
         return None
 
 
+def _daily(registry, name):
+    for attempt in range(4):  # the registries rate-limit and fail intermittently
+        days = _daily_once(registry, name)
+        if days:
+            return days
+        time.sleep(3 * (attempt + 1))
+    return None
+
+
 def downloads():
     starts = _week_starts()
-    out = {}
-    for proto, regs in PACKAGES.items():
+    out, cache = {}, {}
+    for proto, groups in PACKAGES.items():
         out[proto] = {}
-        for registry, names in regs.items():
-            best = None
-            for name in names:
-                days = _daily(registry, name)
-                if not days:
-                    continue
-                weeks = [sum(days.get((w + dt.timedelta(days=i)).isoformat(), 0) for i in range(7)) for w in starts]
-                if best is None or sum(weeks[-4:]) > sum(best['weeks'][-4:]):
-                    best = dict(package=name, weeks=weeks, scope=PACKAGE_SCOPE.get(name, 'first-party'),
-                                candidates=len(names))
-            if best:
-                best['monthly'] = sum(best['weeks'][-4:])
-                out[proto][registry] = best
+        for group, regs in groups.items():
+            out[proto][group] = {}
+            for registry, names in regs.items():
+                best = None
+                for name in names:
+                    if (registry, name) not in cache:
+                        days = _daily(registry, name)
+                        cache[(registry, name)] = None if not days else [
+                            sum(days.get((w + dt.timedelta(days=i)).isoformat(), 0) for i in range(7)) for w in starts]
+                    weeks = cache[(registry, name)]
+                    if not weeks:
+                        continue
+                    if best is None or sum(weeks[-4:]) > sum(best['weeks'][-4:]):
+                        best = dict(package=name, weeks=weeks, publisher=PUBLISHER.get(name), candidates=len(names))
+                if best:
+                    best['monthly'] = sum(best['weeks'][-4:])
+                    out[proto][group][registry] = best
     return dict(week_starts=[w.isoformat() for w in starts], by_protocol=out, no_package=NO_PACKAGE)
 
 
@@ -179,5 +216,5 @@ def npm():
 
 if __name__ == '__main__':
     data = dict(collected=dt.date.today().isoformat(), repos=repos(), npm=npm(), commits=commits(),
-                others=others(), downloads=downloads())
+                others=others(), topics=TOPICS, downloads=downloads())
     json.dump(data, open(sys.argv[1] if len(sys.argv) > 1 else 'data.json', 'w'), indent=1)
