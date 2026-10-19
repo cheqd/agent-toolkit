@@ -12,7 +12,9 @@ REPOS = {'A2A': 'a2aproject/A2A', 'MCP': 'modelcontextprotocol/modelcontextproto
          'ACP': 'agentic-commerce-protocol/agentic-commerce-protocol', 'TAP': 'visa/trusted-agent-protocol',
          'MPP': 'wevm/mppx', 'L402': 'lightninglabs/aperture', 'Web Bot Auth': 'cloudflare/web-bot-auth',
          'ANS': 'agentnameservice/ans', 'x401': 'proof/x401', 'KYA-OS': 'decentralized-identity/kya-os-mcp',
-         'PAP': 'personal-agent-protocol/personal-agent-protocol', 'KYAPay': 'skyfire-xyz/kyapay'}
+         'PAP': 'personal-agent-protocol/personal-agent-protocol', 'KYAPay': 'skyfire-xyz/kyapay',
+         'ERC-8004': 'erc-8004/erc-8004-contracts', 'Verifiable Intent': 'agent-intent/verifiable-intent',
+         'AGNTCY': 'agntcy/oasf'}
 NPM = {'MCP': '@modelcontextprotocol/sdk', 'A2A': '@a2a-js/sdk', 'x402': 'x402', 'MPP': 'mppx',
        'Web Bot Auth': 'web-bot-auth', 'UCP': '@ucp-js/sdk', 'KYA-OS': '@kya-os/mcp', 'x401': '@proof.com/x401-node'}
 
@@ -48,11 +50,15 @@ OTHERS = {
     'ANS': [('agentnameservice/ans-registry', OFF), ('ruvnet/Agent-Name-Service', TP), ('1amageek/ans-sdk-swift', TP)],
     'PAP': [('datalayer/personal-agent-protocol', TP), ('richardanaya/pi-poppy', TP), ('akshay5995/poppyseed', TP)],
     'KYAPay': [('skyfire-xyz/kyapay_a2a', OFF), ('tollstile/Tollstile', TP)],
+    'ERC-8004': [('erc-8004/best-practices', OFF), ('qntx/erc8004', TP), ('agent0lab/agent0-ts', TP), ('agent0lab/agent0-py', TP)],
+    'AGNTCY': [('agntcy/dir', OFF), ('agntcy/slim', OFF), ('agntcy/identity', OFF), ('agntcy/app-sdk', OFF),
+               ('agntcy/dir-sdk-javascript', OFF), ('agntcy/slim-bindings', OFF)],
+    'Verifiable Intent': [('lukasjhan/verifiable-intent', TP)],
 }
 # GitHub repositories tagged with each protocol's topic on 16 Oct 2026. Includes applications that only use the protocol.
 TOPICS = {'MCP': ('model-context-protocol', 37653), 'x402': ('x402', 3827), 'A2A': ('a2a-protocol', 604), 'L402': ('l402', 110),
           'UCP': ('universal-commerce-protocol', 66), 'Web Bot Auth': ('web-bot-auth', 41), 'ACP': ('agentic-commerce-protocol', 27),
-          'AP2': ('agent-payments-protocol', 19)}
+          'AP2': ('agent-payments-protocol', 19), 'ERC-8004': ('erc-8004', 368), 'AGNTCY': ('agntcy', 8)}
 # Packages per protocol, group and registry. For each registry and group the package with the most downloads in the last
 # four weeks is charted, so a package and its dependencies are not counted twice.
 PACKAGES = {
@@ -73,11 +79,16 @@ PACKAGES = {
     'ACP': {OFF: {}, TP: {'npm': ['agentic-commerce-protocol', 'acp-handler'], 'pypi': ['agentic-commerce-protocol']}},
     'KYAPay': {OFF: {'npm': ['@skyfire-xyz/skyfire-seller-sdk-node']}, TP: {'npm': ['@tollstile/kyapay']}},
     'TAP': {OFF: {}, TP: {'npm': ['@inflowpayai/tap-seller']}},
+    'ERC-8004': {OFF: {}, TP: {'crates': ['erc8004', 'erc8004-events'], 'npm': ['agent0-sdk']}},
+    'AGNTCY': {OFF: {'npm': ['agntcy-dir'], 'pypi': ['slim-bindings', 'agntcy-app-sdk', 'agntcy-dir', 'agntcy-identity-sdk'],
+                     'crates': ['agntcy-slim-bindings', 'agntcy-slimctl']}, TP: {}},
+    'Verifiable Intent': {OFF: {}, TP: {'npm': ['verifiable-intent']}},
 }
 # Publishers worth naming next to a charted package.
 PUBLISHER = {'fasta2a': 'Pydantic', 'agentic-commerce-protocol': 'Svix', 'acp-handler': 'Vercel', '@shopify/ucp-cli': 'Shopify',
              'l402': 'Fewsats', '@datalayer/personal-agent-protocol': 'Datalayer', 'personal-agent-protocol': 'Datalayer',
              'poppyseed': 'a community developer', '@inflowpayai/tap-seller': 'InFlow', '@tollstile/kyapay': 'Tollstile',
+             'agent0-sdk': 'Agent0 Lab', 'erc8004': 'a community developer (qntx)', 'verifiable-intent': 'a community developer',
              'mppx': 'wevm, with Tempo', 'pympp': 'Tempo', 'pytempo': 'Tempo', 'vestauth': 'the dotenv author', 'fastmcp': 'Prefect',
              '@skyfire-xyz/skyfire-seller-sdk-node': 'Skyfire'}
 # Protocols where no package was found on npm, PyPI or crates.io, with what was checked.

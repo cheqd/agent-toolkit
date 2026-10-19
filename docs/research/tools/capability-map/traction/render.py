@@ -45,6 +45,12 @@ text{{font-family:{FONT};fill:var(--ink2)}}
 
 # Protocols with no series in a chart, and why. Shown as dashed "no data" markers rather than silently omitted.
 NOT_PUBLIC = 'Closed commercial product: no public repository or package'
+# Protocols with no public repository or package, charted as dashed no-data entries.
+NO_REPO = [('Baselayer KYA', 'Closed commercial product: no public repository or package', 'closed product, no public repo'),
+           ('Stripe SPT', "Proprietary API: no public repository; delivered through Stripe's general SDKs", 'proprietary API, no public repo')]
+NO_REPO_LINES = [f'{n}: {why[0].lower() + why[1:]}.' for n, why, _ in NO_REPO]
+NO_REPO_NAMES = ', '.join(n for n, _, _ in NO_REPO)
+NO_REPO_SHORT = {n: s for n, _, s in NO_REPO}
 
 
 # Charted repository is an SDK or implementation, not the protocol's specification repository.
@@ -52,6 +58,8 @@ PROXY = {
     'MPP': 'wevm/mppx, the TypeScript SDK. The specification repository, tempoxyz/mpp-specs, is not charted.',
     'L402': 'lightninglabs/aperture, a reference implementation. The specification repository, lightninglabs/L402, is not charted.',
     'ANS': 'agentnameservice/ans, a Go reference implementation whose operator is unconfirmed. The IETF draft has no repository.',
+    'AGNTCY': 'agntcy/oasf, the schema framework. The directory, SLIM, identity and SDK repositories are added in the commits chart and listed in each box.',
+    'ERC-8004': 'erc-8004/erc-8004-contracts, reference contracts. The specification is an EIP, which has no GitHub repository.',
     'Web Bot Auth': 'cloudflare/web-bot-auth, Cloudflare\'s implementation. The IETF draft is not charted.',
 }
 
@@ -170,7 +178,7 @@ def chart_npm():
         if parts:
             extra.append(f'{p}: ' + '; '.join(parts))
     secs = [('Protocols with downloads that are not plotted here', ['This chart plots official npm packages only, up to the palette limit of eight series. These are in the all-registries chart:'] + extra),
-            ('Protocols with no npm package found', ['Baselayer KYA: ' + NOT_PUBLIC.lower() + '.'] +
+            ('Protocols with no npm package found', NO_REPO_LINES +
              [f'{p}: {why}.' for p, why in D['downloads']['no_package'].items()]),
             ('Not measured', ['Third-party packages and other registries (PyPI, crates.io) are in the all-registries chart. Maven, NuGet and Go modules are not measured.'])]
     hbox = nc_height(secs)
@@ -271,7 +279,7 @@ def legend_row(x, y, items):
 def chart_commits():
     series = commit_series()
     items = sorted(series.items(), key=lambda kv: -(sum(kv[1]['off']) + sum(kv[1]['tp'] or [])))
-    items.append(('Baselayer KYA', None))  # no public repository
+    items += [(n, None) for n, _, _ in NO_REPO]  # no public repository
     cols, pw, ph = 5, 160, 70
     gx, gy = 28, 56
     L, T = 40, 150
@@ -289,7 +297,7 @@ def chart_commits():
             tp_lines.append(f'{n}: none found')
     gaps = sorted({m for sr in series.values() for m in sr['missing']})
     topics = ', '.join(f'{p} {c:,}' for p, (t, c) in D.get('topics', {}).items())
-    secs = [('Protocols with no panel', ['Baselayer KYA: closed commercial product, no public repository.']),
+    secs = [('Protocols with no panel', NO_REPO_LINES),
             ('Official repositories added together in each panel', off_lines),
             ('Third-party repositories added together (hand-picked examples; \u2021 = counted under more than one protocol)', tp_lines),
             ('How third-party repositories were chosen', [
@@ -314,7 +322,7 @@ def chart_commits():
             b.append(f'<text class="lab" x="{x0}" y="{y0-30}" style="font-weight:700">{esc(n)}</text>'
                      f'<rect class="nd" x="{x0}" y="{y0}" width="{pw}" height="{ph}" rx="4"/>'
                      f'<text class="ndt" x="{x0+pw/2}" y="{y0+ph/2-3}" text-anchor="middle">No data</text>'
-                     f'<text class="ndt" x="{x0+pw/2}" y="{y0+ph/2+12}" text-anchor="middle">closed product, no public repo</text>')
+                     f'<text class="ndt" x="{x0+pw/2}" y="{y0+ph/2+12}" text-anchor="middle">{esc(NO_REPO_SHORT.get(n, "no public repo"))}</text>')
             continue
         wk = sr['weeks']
         n_w = len(wk)
@@ -357,7 +365,7 @@ def chart_commits():
     return svg(W, H, ''.join(b), 'Weekly commits to each protocol: official and third-party repositories',
                'Small multiples, one panel per protocol, shared scale, official and third-party lines. ' +
                '; '.join(f'{n} {sum(sr["off"])} official' + (f' and {sum(sr["tp"])} third-party' if sr['tp'] is not None else '') + ' commits' for n, sr in items if sr) +
-               '; Baselayer KYA has no data (closed product)')
+               '; no data for ' + NO_REPO_NAMES)
 
 
 # ---------------------------------------------------------------- chart 2b: weekly downloads, official vs third-party
@@ -374,7 +382,7 @@ def chart_downloads():
         if off or tp:
             rows_.append((p, groups, off, tp))
     rows_.sort(key=lambda r: -((r[2] or [0])[-1] + (r[3] or [0])[-1]))
-    nodata = [('Baselayer KYA', 'closed product, no package')] + [(p, 'no package found') for p in DL['no_package']]
+    nodata = [(n, 'no public repo or package') for n, _, _ in NO_REPO] + [(p, 'no package found') for p in DL['no_package']]
     cols, pw, ph = 4, 200, 64
     gx, gy = 44, 78
     L, T = 58, 146
@@ -398,7 +406,7 @@ def chart_downloads():
                 if others:
                     alts += wrap(f'{p} ({grp}, {reg}): {", ".join(others)}')
     topics = ', '.join(f'{p} {c:,}' for p, (t, c) in D.get('topics', {}).items())
-    secs = [('Protocols with no data', ['Baselayer KYA: ' + NOT_PUBLIC.lower() + '.'] + [f'{p}: {why}.' for p, why in DL['no_package'].items()]),
+    secs = [('Protocols with no data', NO_REPO_LINES + [f'{p}: {why}.' for p, why in DL['no_package'].items()]),
             ('Official packages counted (per registry, the most downloaded)', pkg_lines('official')),
             ('Third-party packages counted (hand-picked examples; the publisher is named)', pkg_lines('third-party')),
             ('Other packages of the same registry and group, not added (a package and its dependencies would be counted twice)', alts),
@@ -475,12 +483,12 @@ def chart_downloads():
 # ---------------------------------------------------------------- chart 3: stars snapshot dot plot
 def chart_stars():
     items = sorted(D['repos'].items(), key=lambda kv: -kv[1]['stars'])
-    items.append(('Baselayer KYA', None))  # no public repository
+    items += [(n, None) for n, _, _ in NO_REPO]  # no public repository
     quiet = {n for n, wk in D['commits'].items() if sum(v for _, v in wk[-13:]) == 0}
     W = 960
     L, R, T = 150, 250, 100
     rh = 28
-    secs = [('Protocols with no data', ['Baselayer KYA: closed commercial product, no public repository.']),
+    secs = [('Protocols with no data', NO_REPO_LINES),
             ('Other repositories, with stars (\u2020 = third-party, hand-picked examples; \u2021 = counted under more than one protocol)',
              ['One repository is charted per protocol, and others can be larger: FastMCP and the MCP Python and TypeScript SDKs hold more stars than the MCP specification repository.'] + others_lines('stars')),
             ('Repositories tagged with each protocol topic, applications included',
@@ -488,7 +496,7 @@ def chart_stars():
     hbox = nc_height(secs)
     H = T + len(items) * rh + 40 + 14 * (len(PROXY) + 1) + 16 + hbox + 24
     pw = W - L - R
-    lo, hi = 1, 5  # 10 .. 100K
+    lo, hi = 0.7, 5  # 5 .. 100K
 
     def X(v):
         return L + pw * (math.log10(v) - lo) / (hi - lo)
@@ -496,7 +504,7 @@ def chart_stars():
          f'<text class="sub" x="{L-110}" y="50">Log scale, 16 Oct 2026. Stars measure attention, not use. Star history over time was not available from the GitHub API here.</text>']
     b.append(f'<circle cx="{L-106}" cy="76" r="5" style="fill:var(--s1);stroke:var(--surface);stroke-width:2"/><text class="val" x="{L-96}" y="80">Commits in the last 13 weeks</text>'
              f'<circle cx="{L+110}" cy="76" r="5" style="fill:var(--surface);stroke:var(--s1);stroke-width:2"/><text class="val" x="{L+120}" y="80">No commits in the last 13 weeks</text>')
-    for k in range(lo, hi + 1):
+    for k in range(1, hi + 1):
         x = X(10 ** k)
         b.append(f'<line class="grid" x1="{x:.1f}" x2="{x:.1f}" y1="{T-6}" y2="{T+len(items)*rh}"/>'
                  f'<text class="ax" x="{x:.1f}" y="{T+len(items)*rh+16}" text-anchor="middle">{fmt(10**k)}</text>')
@@ -505,7 +513,7 @@ def chart_stars():
         if r is None:
             b.append(f'<text class="lab" x="{L-12}" y="{y+4:.1f}" text-anchor="end">{esc(n)}</text>'
                      f'<rect class="nd" x="{L+8}" y="{y-10:.1f}" width="{pw-16}" height="20" rx="4"/>'
-                     f'<text class="ndt" x="{L+20}" y="{y+4:.1f}">No data: closed commercial product, no public repository</text>')
+                     f'<text class="ndt" x="{L+20}" y="{y+4:.1f}">No data: {esc(dict((a, b) for a, b, _ in NO_REPO).get(n, "no public repository"))}</text>')
             continue
         hollow = n in quiet
         fill = 'var(--surface)' if hollow else 'var(--s1)'
@@ -517,7 +525,7 @@ def chart_stars():
                   [f'   {k}: {v}' for k, v in PROXY.items()]))
     b.append(nc_box(L - 110, T + len(items) * rh + 40 + 14 * (len(PROXY) + 1) + 16, W - 2 * (L - 110), secs))
     return svg(W, H, ''.join(b), 'GitHub stars on each protocol main repository',
-               'Dot plot on a log scale. ' + '; '.join(f'{n} {r["stars"]:,}' for n, r in items if r) + '; Baselayer KYA has no data (closed product)')
+               'Dot plot on a log scale. ' + '; '.join(f'{n} {r["stars"]:,}' for n, r in items if r) + '; no data for ' + NO_REPO_NAMES)
 
 
 if __name__ == '__main__':
