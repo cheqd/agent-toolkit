@@ -34,11 +34,11 @@ Any headless Chromium works. For example, with Chrome on macOS:
 
 ```bash
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless \
-  --hide-scrollbars --force-device-scale-factor=2 --window-size=1610,1500 \
+  --hide-scrollbars --force-device-scale-factor=2 --window-size=1610,1600 \
   --screenshot=protocol-capability-map.png file://$PWD/capability-map.html
 ```
 
-The window size fits the current content. Use a height of 1340 instead of 1500 for the `--no-cheqd` version, and change it if you add rows. The half-circle glyph is set in DejaVu Sans; if your machine lacks it, the glyph falls back to a system font and may look smaller.
+The window size fits the current content. Use a height of 1400 instead of 1600 for the `--no-cheqd` version, and change it if you add rows, capability chips or legend notes (check the rendered PNG for a cut-off legend before committing). The half-circle glyph is set in DejaVu Sans; if your machine lacks it, the glyph falls back to a system font and may look smaller.
 
 ## Provisional protocols
 
