@@ -8,4 +8,5 @@
  */
 
 export * from './status/ledger-anchored.js';
+export * from './status/status-list-resolver.js';
 export * from './agent-card/retrieve-public-key.js';
