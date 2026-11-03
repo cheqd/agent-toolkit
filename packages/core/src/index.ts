@@ -8,3 +8,4 @@
  */
 
 export * from './status/ledger-anchored.js';
+export * from './agent-card/retrieve-public-key.js';
