@@ -13,3 +13,4 @@ export * from './agent-card/retrieve-public-key.js';
 export * from './linkage/reciprocal-linkage.js';
 export * from './dlr/resolve-manifest.js';
 export * from './replay/file-nonce-cache.js';
+export * from './did-cheqd/resolve.js';
