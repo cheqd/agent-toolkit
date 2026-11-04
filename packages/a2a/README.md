@@ -23,6 +23,10 @@ A2A binding: a request/response proof gate for `@a2a-js/sdk`, and the matching c
   `@a2a-js/sdk` and `@kya-os/mcp`.
 - `smoke-test.mjs`, `smoke-test-rest.mjs`, `smoke-test-grpc.mjs`, `smoke-test-agent-card.mjs` —
   real client/server round trips for JSON-RPC, REST, gRPC and Agent Card signature verification.
+- `sample/` — a runnable walkthrough of all three transports plus the cheqd-specific checks,
+  including one real network call against the public cheqd testnet resolver. See
+  [`sample/README.md`](./sample/README.md) for what's real and what's a labelled synthetic
+  fixture.
 
 ## gRPC proofs: fixed
 
@@ -42,11 +46,11 @@ than inventing a gRPC-specific covered-form definition or binding to raw protobu
 ## What's not here yet
 
 DID-Linked Resource policy (resolution exists in `@cheqd/agent-identity`'s `resolveManifest` and
-`createManifestCache`, not wired in here), `did:cheqd` resolution for the Agent Card resolver
-(exists as `createDidCheqdResolver`, not wired in here), and a runnable sample against cheqd
-testnet. Status-list checks and a persistent replay cache now exist in `@cheqd/agent-identity`
-(`createLedgerAnchoredStatusListResolver`, `FileNonceCacheProvider`) but aren't called from this
-package yet either.
+`createManifestCache`, not wired in here). Status-list checks and a persistent replay cache now
+exist in `@cheqd/agent-identity` (`createLedgerAnchoredStatusListResolver`,
+`FileNonceCacheProvider`) but aren't called from this package's own gate by default either —
+`sample/run.mjs` calls them directly to demonstrate them, rather than this package wiring them
+in as a default.
 
 ## License
 
