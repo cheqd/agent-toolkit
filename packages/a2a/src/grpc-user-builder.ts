@@ -23,10 +23,24 @@
  * The enforcing wrapper (`wrapper.ts`) is unchanged for gRPC: it only cares about
  * `ServerCallContext.user`, which this userBuilder populates the same way the Express one does.
  *
+ * COVERED FORM: `call.request` is the raw *decoded* protobuf object - ts-proto's `decode()`
+ * shape (field defaults present, enums numeric, `oneof`s as `{content: {$case, value}}`). That
+ * is NOT what the client signed: `client.ts`'s `createProofInterceptor` computes the covered
+ * form via `SendMessageRequest.toJSON(params)` - protobuf's standard canonical-JSON mapping
+ * (enums as strings, defaults omitted, `oneof`s flattened), the same mapping every protobuf
+ * implementation defines (https://protobuf.dev/programming-guides/json/). Hashing the decoded
+ * object directly, as an earlier version of this file did, makes every gRPC proof fail with
+ * `request_hash_mismatch` even when correctly signed - confirmed by diffing both shapes
+ * (`smoke-test-grpc.mjs`'s original finding). The fix is not a new canonicalisation scheme: run
+ * `call.request` through the SAME `SendMessageRequest.toJSON` the client already uses (it is a
+ * root `@a2a-js/sdk` export, not `server/grpc`-specific), so both sides hash the identical JSON
+ * value regardless of which side decoded it.
+ *
  * DRAFT — early exploration, not reviewed or stable. See the repository README.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+import { SendMessageRequest } from '@a2a-js/sdk';
 import { verifyCardProof } from '@kya-os/mcp/card';
 import { coveredRequest, PROOF_META_KEY } from './covered-request.js';
 import type { GateUser, GateVerifyDeps } from './types.js';
@@ -51,7 +65,9 @@ export function createVerifyingGrpcUserBuilder(deps: GateVerifyDeps) {
 	return async function verifyingGrpcUserBuilder(call: GrpcCallLike): Promise<GateUser> {
 		const method = methodFromPath(call.path);
 		if (!method || !WRITE_METHODS.has(method)) return { isAuthenticated: false, userName: '' };
-		const params = call.request as { message?: { metadata?: Record<string, unknown> } } | undefined;
+		const params = SendMessageRequest.toJSON(call.request as never) as {
+			message?: { metadata?: Record<string, unknown> };
+		};
 		const proof = params?.message?.metadata?.[PROOF_META_KEY];
 		if (!proof) return { isAuthenticated: false, userName: '', rejection: 'missing' };
 		const covered = coveredRequest(method, params);

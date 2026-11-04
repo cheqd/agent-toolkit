@@ -24,29 +24,29 @@ A2A binding: a request/response proof gate for `@a2a-js/sdk`, and the matching c
 - `smoke-test.mjs`, `smoke-test-rest.mjs`, `smoke-test-grpc.mjs`, `smoke-test-agent-card.mjs` —
   real client/server round trips for JSON-RPC, REST, gRPC and Agent Card signature verification.
 
-## A known gap: gRPC proofs don't work yet, and the gate's rejection does
+## gRPC proofs: fixed
 
-`smoke-test-grpc.mjs` shows both halves. The gate itself (`call.path` method detection,
+`smoke-test-grpc.mjs` shows both halves passing. The gate itself (`call.path` method detection,
 enforcement, typed-error mapping) works correctly over gRPC: an unproofed call is rejected with
-the executor never running. A *correctly proofed* call currently fails, and that failure is the
-finding, not a test bug: `client.ts`'s `createProofInterceptor` computes the covered request
-from `SendMessageRequest.toJSON(params)` - the JSON-RPC wire shape (default fields omitted,
-enums as strings, `oneof`s flattened). gRPC's `call.request` on the server is the SDK's
-deserialised protobuf object instead (defaults present, enums numeric, `oneof`s as `{content:
-{$case: "text", value: "hi"}}`). Confirmed by diffing both shapes directly. There is no JSON
-wire form for gRPC to canonicalise against in the first place - the real wire form is binary
-protobuf - so this isn't a bug to patch so much as an open design question: does gRPC need its
-own covered-form definition, should the proof bind to raw protobuf bytes if the SDK exposes them
-pre-decode, or does a proof simply never cross transports? Not decided here.
+the executor never running. A *correctly proofed* call previously failed:
+`client.ts`'s `createProofInterceptor` computes the covered request from
+`SendMessageRequest.toJSON(params)` - protobuf's canonical-JSON mapping (default fields omitted,
+enums as strings, `oneof`s flattened) - but `grpc-user-builder.ts` was hashing `call.request`
+directly, the SDK's *deserialised* protobuf object (defaults present, enums numeric, `oneof`s as
+`{content: {$case: "text", value: "hi"}}`) - a structurally different shape, confirmed by
+diffing both directly. Fixed by running `call.request` through that same `SendMessageRequest.
+toJSON` before building the covered form (`SendMessageRequest` is a root `@a2a-js/sdk` export,
+not `server/grpc`-specific) - reusing the SDK's own canonical-JSON converter on both sides rather
+than inventing a gRPC-specific covered-form definition or binding to raw protobuf bytes.
 
 ## What's not here yet
 
 DID-Linked Resource policy (resolution exists in `@cheqd/agent-identity`'s `resolveManifest` and
 `createManifestCache`, not wired in here), `did:cheqd` resolution for the Agent Card resolver
-(exists as `createDidCheqdResolver`, not wired in here), the gRPC proof covered-form gap above,
-and a runnable sample against cheqd testnet. Status-list checks and a persistent replay cache
-now exist in `@cheqd/agent-identity` (`createLedgerAnchoredStatusListResolver`,
-`FileNonceCacheProvider`) but aren't called from this package yet either.
+(exists as `createDidCheqdResolver`, not wired in here), and a runnable sample against cheqd
+testnet. Status-list checks and a persistent replay cache now exist in `@cheqd/agent-identity`
+(`createLedgerAnchoredStatusListResolver`, `FileNonceCacheProvider`) but aren't called from this
+package yet either.
 
 ## License
 

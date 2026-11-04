@@ -2,20 +2,17 @@
 // Express's userBuilder entirely - reads call.request, discriminates the RPC via call.path).
 // Real @grpc/grpc-js server and client, no mocks beyond in-memory DIDs.
 //
-// Scenario 1 (a correctly proofed call) is EXPECTED TO FAIL right now, and that failure is the
-// actual finding, not a bug in this test: client.ts's createProofInterceptor computes the
-// covered form via SendMessageRequest.toJSON(params) - the JSON-RPC wire shape (defaults
-// omitted, enums as strings, oneofs flattened, e.g. `{text: "hi"}`). gRPC's call.request on the
-// server is the SDK's deserialized protobuf object instead (defaults present, enums numeric,
-// oneofs as `{content: {$case: "text", value: "hi"}}`). The two shapes differ structurally, so
-// the recomputed requestHash never matches and every gRPC proof is rejected as
-// request_hash_mismatch - confirmed by diffing both shapes directly, not inferred from the
-// error alone. There is no janky wire JSON for gRPC to canonicalise against in the first place:
-// the real wire form is binary protobuf. Fixing this needs a real design decision (a
-// gRPC-specific covered-form definition? raw protobuf bytes, if the SDK exposes them before
-// decode? one proof that can never cross transports?) - not made here. Scenario 2 (the
-// unproofed-call rejection) is unaffected and passes for real: the gate itself - call.path
-// method detection, enforcement, typed-error mapping - works correctly over gRPC.
+// Both scenarios pass. Scenario 1 (a correctly proofed call) previously failed: client.ts's
+// createProofInterceptor computes the covered form via SendMessageRequest.toJSON(params) -
+// protobuf's canonical-JSON mapping (defaults omitted, enums as strings, oneofs flattened).
+// gRPC's call.request on the server was being hashed as the SDK's raw *decoded* protobuf object
+// instead (defaults present, enums numeric, oneofs as `{content: {$case: "text", value: "hi"}}`)
+// - a structurally different shape, so requestHash never matched. Fixed in
+// grpc-user-builder.ts by running call.request through that same SendMessageRequest.toJSON
+// before building the covered form - not a new canonicalisation scheme, just reusing the SDK's
+// own converter on both sides. Scenario 2 (the unproofed-call rejection) was already passing:
+// the gate itself - call.path method detection, enforcement, typed-error mapping - works
+// correctly over gRPC.
 import * as grpc from '@grpc/grpc-js';
 import { generateKeyPair, exportJWK } from 'jose';
 import { Role, TaskState } from '@a2a-js/sdk';
