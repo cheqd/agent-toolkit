@@ -1,0 +1,20 @@
+{
+	"suite": "a2a-gate",
+	"version": "1",
+	"description": "The minimum negative-vector set v1/spec.md §8 requires an implementation to reject, plus VEC-A2A-GATE-1 and VEC-A2A-RESP-1. Each id is implemented by exactly one test in every language runner for this suite - see run-a2a-gate-vectors.mjs for the Node/TypeScript runner.",
+	"vectors": [
+		{ "id": "VEC-A2A-NEG-WRONG-AUDIENCE", "category": "negative", "description": "A proof whose audience names a DID other than this server MUST be rejected." },
+		{ "id": "VEC-A2A-NEG-EXPIRED-PROOF", "category": "negative", "description": "A proof whose expires has already passed (beyond skew) MUST be rejected." },
+		{ "id": "VEC-A2A-NEG-REPLAYED-NONCE", "category": "negative", "description": "A second use of a nonce already consumed MUST be rejected, even with an otherwise-valid signature." },
+		{ "id": "VEC-A2A-NEG-ALTERED-MESSAGE-PART", "category": "negative", "description": "A message part altered after signing MUST be rejected (requestHash recompute mismatch)." },
+		{ "id": "VEC-A2A-NEG-ALTERED-CONTEXT-ID", "category": "negative", "description": "A contextId altered after signing MUST be rejected." },
+		{ "id": "VEC-A2A-NEG-ALTERED-TASK-ID", "category": "negative", "description": "A taskId altered after signing MUST be rejected." },
+		{ "id": "VEC-A2A-NEG-KEY-SUBSTITUTION", "category": "negative", "description": "A proof signed by a key not published under the claimed DID MUST be rejected, even if kid syntactically names that DID." },
+		{ "id": "VEC-A2A-NEG-ALG-KEY-MISMATCH", "category": "negative", "description": "A proof whose alg does not match the resolved key's type MUST be rejected." },
+		{ "id": "VEC-A2A-NEG-DOWNGRADED-CNF", "category": "negative", "description": "A caller that drops a previously-asserted cnf binding does not silently upgrade to full trust - the gate MUST reflect the downgrade, never hide it." },
+		{ "id": "VEC-A2A-NEG-REVOKED-CREDENTIAL", "category": "negative", "description": "A verified caller whose trust-extension status check reports revoked MUST be rejected, even with a fully valid A2A proof." },
+		{ "id": "VEC-A2A-NEG-STALE-POLICY", "category": "negative", "description": "A verified caller whose trust-extension manifest/status check cannot be completed (stale, unresolvable) MUST be rejected, never treated as policy-absent." },
+		{ "id": "VEC-A2A-RESP-1", "category": "response", "description": "The response proof MUST verify against the result as the client receives it, and MUST NOT verify against a different result." },
+		{ "id": "VEC-A2A-GATE-1", "category": "invariant", "description": "Every rejection above MUST leave the task store byte-identical to before the rejected call - the executor never runs." }
+	]
+}
