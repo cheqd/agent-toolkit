@@ -1,9 +1,9 @@
 # Threat model
 
 > **DRAFT — early exploration, not reviewed or stable.** Covers `packages/core`, `packages/a2a`
-> and `packages/ap2` as implemented so far (stacked PRs #16-#20). Part of WS6; this document and
-> `conformance/vectors/a2a-gate.json` are the two WS6 artifacts built so far — dependency review,
-> release pipeline and operator runbook are not yet done.
+> and `packages/ap2` as implemented so far (stacked PRs #16-#21). Part of WS6; this document,
+> `conformance/vectors/a2a-gate.json`, `conformance/fuzz-proof-parsing.mjs` and the dependency
+> review are what's built so far — release pipeline and operator runbook are not yet done.
 
 ## Scope and trust boundaries
 
@@ -33,7 +33,8 @@ programme's own code (`@a2a-js/sdk`, `@kya-os/mcp`, `@sd-jwt/core`, cheqd's ledg
 | T9 | AP2 mandate replay - the SAME Open Mandate authorising two different transactions in two different A2A calls, each individually proof-valid. | A dedicated, mandate-scoped consumption store (`mandate-consumption-store.ts`), not a reuse of the A2A proof's 60-second nonce cache - a mandate's own reuse window is a different lifetime entirely. `consumeOnce` is exclusive-create atomic for one-time mandates; `recordUse`'s cumulative tracking is correct within one process, not across them (documented, not silently assumed). | `mandate-consumption-store.ts` |
 | T10 | A wildcard `checkout.line_items` constraint provides much weaker assurance than an allowlist one - found while building `max-flow.ts`. The matcher checks that every CART item can be assigned to *some* requirement slot, never that every slot is filled, so a wildcard slot accepts arbitrary extra or substituted items without violation. | Not a bug - this is upstream AP2's own semantics, preserved faithfully rather than "fixed" (a divergence from AP2 would itself be a worse interop risk). Documented loudly in `max-flow.ts`'s doc comment and this threat model so an integrator choosing a wildcard constraint understands what it does and does not assure. | `max-flow.ts` |
 | T11 | Status-list integrity - a revoked credential or payment key read as live because nobody checked the list's own proof, or because the list itself has no integrity evidence. | Two paths, deliberately not conflated: `verifyLedgerAnchoredStatus` (checksum/ledger-anchoring, no issuer proof needed) and `createCheqdStatusChecker` (proof-checked, `eddsa-jcs-2022`). Both fail closed on every unreadable/stale/inconsistent case. Neither has live on-chain data to verify against yet - see "Known gaps". | `ledger-anchored.ts`, `eddsa-jcs-status.ts` |
-| T12 | Junk proofs driving resolver load - a flood of garbage proofs, each triggering a DID resolution before being rejected. | Noted as a risk in `PLAN.md` (cheap pre-checks before resolution bring this from 200 to 66 resolutions in the original spike) but not independently re-verified against the current `packages/a2a` gate in this programme. **Not yet covered by a vector or a test** - candidate for the fuzzing pass below. | `PLAN.md` §8 (risk table) |
+| T12 | Junk proofs driving resolver load - a flood of garbage proofs, each triggering a DID resolution before being rejected. | Noted as a risk in `PLAN.md` (cheap pre-checks before resolution bring this from 200 to 66 resolutions in the original spike) but not independently re-verified against the current `packages/a2a` gate in this programme - the fuzzing pass below covers fail-closed correctness under malformed input, not resolver-load volume, so this remains open. | `PLAN.md` §8 (risk table) |
+| T13 | Malformed/type-confused input to a parsing function throws instead of failing closed, surfacing as an uncaught exception (an opaque HTTP 500, or - worse - crashing the process) rather than a rejection. Found by fuzzing, 5 November 2026: `createVerifyingUserBuilder`/`createVerifyingGrpcUserBuilder` threw when the whole `req`/`call` argument was `null`/`undefined`; `verifyTransactionDataBinding` threw when its content argument could not be hashed. | Both fixed (optional-chaining in the gate's `req`/`call` handling; a try/catch around the hash in `verifyTransactionDataBinding`). `conformance/fuzz-proof-parsing.mjs` now runs clean across 5 seeds × 800 iterations. | `user-builder.ts`, `grpc-user-builder.ts`, `sd-jwt-presentation.ts`, `conformance/fuzz-proof-parsing.mjs` |
 
 ## Known gaps (explicitly not mitigated yet)
 
@@ -63,8 +64,13 @@ programme's own code (`@a2a-js/sdk`, `@kya-os/mcp`, `@sd-jwt/core`, cheqd's ledg
 substitution, `alg`/key mismatch, downgraded `cnf`, revoked credential, stale policy) against the
 real gate over real HTTP, plus `VEC-A2A-RESP-1`/`VEC-A2A-GATE-1`. T1, T7, T8, T9, T10, T11 are
 covered by the packages' own unit/smoke tests cited in the table above, not yet pulled into the
-same consolidated vector suite. **Fuzzing over proof/covered-request parsing (T12 and malformed-
-input robustness generally) has not been done** - the next WS6 step.
+same consolidated vector suite.
+
+`conformance/fuzz-proof-parsing.mjs` covers T13 (malformed-input robustness across every
+untrusted-input entry point this programme owns) and found both of T13's instances on its first
+run - see that file and `conformance/README.md` for what it covers and what it deliberately does
+not (resolver-load volume, T12, and anything requiring non-JSON-safe input, which cannot occur
+on the wire).
 
 ## License
 

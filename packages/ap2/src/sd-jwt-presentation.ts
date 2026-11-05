@@ -126,8 +126,18 @@ export function transactionDataHash(closedMandateContent: unknown): string {
 }
 
 /** Checks that `transactionDataHash(content)` is one of the KB-JWT's declared `transaction_data`
- * hashes - the binding between the open mandate presentation and a specific closed mandate. */
+ * hashes - the binding between the open mandate presentation and a specific closed mandate.
+ * Fails closed (`false`) rather than throwing on content that cannot be hashed at all (found by
+ * fuzzing: a function or `Symbol` value, neither of which `JSON.stringify` can serialize) -
+ * `closedMandateContent` is `unknown` because this checks caller-supplied data, not because any
+ * JS value is a meaningful input. */
 export function verifyTransactionDataBinding(keyBinding: VerifiedOpenMandatePresentation<unknown>['keyBinding'], closedMandateContent: unknown): boolean {
 	const declared = keyBinding.transaction_data ?? [];
-	return declared.includes(transactionDataHash(closedMandateContent));
+	let hash: string;
+	try {
+		hash = transactionDataHash(closedMandateContent);
+	} catch {
+		return false;
+	}
+	return declared.includes(hash);
 }

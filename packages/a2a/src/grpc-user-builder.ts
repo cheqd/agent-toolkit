@@ -62,10 +62,10 @@ function methodFromPath(path: string | undefined): string | undefined {
 }
 
 export function createVerifyingGrpcUserBuilder(deps: GateVerifyDeps) {
-	return async function verifyingGrpcUserBuilder(call: GrpcCallLike): Promise<GateUser> {
-		const method = methodFromPath(call.path);
+	return async function verifyingGrpcUserBuilder(call: GrpcCallLike | null | undefined): Promise<GateUser> {
+		const method = methodFromPath(call?.path);
 		if (!method || !WRITE_METHODS.has(method)) return { isAuthenticated: false, userName: '' };
-		const params = SendMessageRequest.toJSON(call.request as never) as {
+		const params = SendMessageRequest.toJSON(call?.request as never) as {
 			message?: { metadata?: Record<string, unknown> };
 		};
 		const proof = params?.message?.metadata?.[PROOF_META_KEY];

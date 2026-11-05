@@ -28,3 +28,31 @@ regardless of its positive-path behaviour.
 Proof-layer vectors (the `org.kya-os/proof.v1` profile itself) would be reused unchanged from
 `@kya-os/mcp`, fetched from GitHub at a pinned ref — the npm tarball does not ship
 `conformance/`. Not yet pulled in here.
+
+## `fuzz-proof-parsing.mjs`
+
+Focused fuzzing over every untrusted-input entry point this programme owns: the JSON-RPC/REST
+and gRPC `userBuilder`s, `coveredRequest`, the generic `eddsa-jcs-2022` verifier, the proof-
+checked status checker, `CheckoutMandateChain.verify`, and the AP2 presentation/transaction-
+data-binding functions. Generates structurally-malformed, type-confused and prototype-pollution-
+shaped input (bounded to the realistic wire-level space: JSON-safe values, since every target
+receives its input after `express.json()`, a protobuf-to-JSON mapping, or `JSON.parse` - a
+`Symbol` or a function can never actually arrive this way) and asserts the one property that
+matters for all of them: fail closed, never throw past the function's own documented boundary,
+never hang. A deterministic seed makes any failure reproducible:
+
+```sh
+node conformance/fuzz-proof-parsing.mjs
+# or, to replay a specific run:
+FUZZ_SEED=20261105 FUZZ_ITERATIONS=800 node conformance/fuzz-proof-parsing.mjs
+```
+
+**Found two real issues on its first run** (5 November 2026), both fixed:
+- `createVerifyingUserBuilder`/`createVerifyingGrpcUserBuilder` threw instead of rejecting when
+  the whole `req`/`call` argument was itself `null`/`undefined`, rather than just a malformed
+  body - exactly the "a throwing userBuilder surfaces as an opaque HTTP 500" failure mode these
+  functions' own doc comments say to avoid. Fixed in `user-builder.ts`/`grpc-user-builder.ts`.
+- `verifyTransactionDataBinding` threw instead of returning `false` when the closed-mandate
+  content couldn't be hashed at all. Fixed in `sd-jwt-presentation.ts`.
+
+Clean across 5 seeds × 800 iterations (32,000+ calls) after the fixes.
