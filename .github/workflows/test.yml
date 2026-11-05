@@ -1,0 +1,63 @@
+name: "Test"
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+  push:
+    branches:
+      - develop
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: "Build, unit tests, conformance vectors, fuzz"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (clean, not incremental)
+        run: |
+          find . -name "*.tsbuildinfo" -not -path "*/node_modules/*" -delete
+          npm run build
+
+      - name: Unit tests - @cheqd/agent-identity
+        run: node --test packages/core/test/*.test.mjs
+
+      - name: Unit tests - @cheqd/agent-identity-a2a
+        run: node --test packages/a2a/test/*.test.mjs
+
+      - name: Unit tests - @cheqd/agent-identity-ap2
+        run: node --test packages/ap2/test/*.test.mjs
+
+      - name: Smoke tests - @cheqd/agent-identity-a2a
+        working-directory: packages/a2a
+        run: |
+          node smoke-test.mjs
+          node smoke-test-rest.mjs
+          node smoke-test-grpc.mjs
+          node smoke-test-agent-card.mjs
+          node smoke-test-trust-extension.mjs
+
+      - name: Sample - @cheqd/agent-identity-a2a
+        working-directory: packages/a2a
+        run: node sample/run.mjs
+
+      - name: Conformance - negative-vector suite
+        run: node conformance/run-a2a-gate-vectors.mjs
+
+      - name: Conformance - fuzz proof/mandate parsing
+        run: node conformance/fuzz-proof-parsing.mjs
+        env:
+          FUZZ_ITERATIONS: 500
