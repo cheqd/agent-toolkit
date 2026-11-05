@@ -1,9 +1,10 @@
 # Threat model
 
 > **DRAFT — early exploration, not reviewed or stable.** Covers `packages/core`, `packages/a2a`
-> and `packages/ap2` as implemented so far (stacked PRs #16-#21). Part of WS6; this document,
-> `conformance/vectors/a2a-gate.json`, `conformance/fuzz-proof-parsing.mjs` and the dependency
-> review are what's built so far — release pipeline and operator runbook are not yet done.
+> and `packages/ap2` as implemented so far (stacked PRs #16-#21). Part of WS6, alongside the
+> negative-vector suite, the fuzzing pass, the dependency review, a CI workflow
+> (`.github/workflows/test.yml`) running all of the above on every PR, and the operator runbook
+> (`docs/security/runbook.md`).
 
 ## Scope and trust boundaries
 
