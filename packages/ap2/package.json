@@ -2,7 +2,7 @@
   "name": "@cheqd/agent-identity-ap2",
   "version": "0.0.0",
   "private": true,
-  "description": "DRAFT \u2014 AP2 binding. Nothing is implemented.",
+  "description": "DRAFT \u2014 AP2 binding: open mandate chain verification, cnf key continuity, secondary payment keys.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,7 +16,15 @@
   "files": [
     "dist"
   ],
+  "dependencies": {
+    "@cheqd/agent-identity": "0.0.0",
+    "@sd-jwt/core": "^0.24.3",
+    "jose": "^6.2.15"
+  },
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5"
   }
 }
