@@ -1,9 +1,14 @@
 name: "Test"
 on:
-  pull_request:
-    branches:
-      - main
-      - develop
+  # Deliberately no `branches:` filter here, unlike Lint/DCO - this repo's PRs are routinely
+  # stacked on top of each other (base branch is another open PR's branch, not main/develop), so
+  # a branches filter would mean this never runs on any PR except whichever one currently targets
+  # main/develop directly. Confirmed by checking the existing stack (cheqd/agent-toolkit#17/#18/
+  # #20/#21): none of them show a Lint or DCO run at all, only the org's own GitGuardian check,
+  # which runs independently of workflow files. Running on every PR regardless of base is the
+  # point - each stacked PR should get its own real test signal, not just the final one merged
+  # into main.
+  pull_request: {}
   push:
     branches:
       - develop
