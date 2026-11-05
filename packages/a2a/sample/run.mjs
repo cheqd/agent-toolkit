@@ -8,6 +8,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import * as grpc from '@grpc/grpc-js';
 import { generateKeyPair, exportJWK } from 'jose';
@@ -17,7 +21,7 @@ import { jsonRpcHandler, restHandler } from '@a2a-js/sdk/server/express';
 import { A2AService, grpcService } from '@a2a-js/sdk/server/grpc';
 import { GrpcTransportFactory } from '@a2a-js/sdk/client/grpc';
 import { ClientFactory, ClientFactoryOptions, JsonRpcTransportFactory } from '@a2a-js/sdk/client';
-import { ed25519SignerFromJwk, buildCardProof, InMemoryNonceCache } from '@kya-os/mcp/card';
+import { ed25519SignerFromJwk, buildCardProof } from '@kya-os/mcp/card';
 import { NodeCryptoProvider, SystemClockProvider, MemoryNonceCacheProvider, RuntimeFetchProvider } from '@kya-os/mcp/providers';
 import {
 	createVerifyingUserBuilder,
@@ -25,8 +29,23 @@ import {
 	withAgentIdentity,
 	createProofInterceptor,
 	coveredRequest,
+	verifyTrustExtension,
+	createTrustExtensionCache,
 } from '../dist/index.js';
-import { createDidCheqdResolver, createRetrievePublicKey, verifyLedgerAnchoredStatus } from '@cheqd/agent-identity';
+import {
+	createDidCheqdResolver,
+	createRetrievePublicKey,
+	verifyLedgerAnchoredStatus,
+	createCheqdStatusChecker,
+	createManifestCache,
+	FileNonceCacheProvider,
+} from '@cheqd/agent-identity';
+
+// Persistent (file-backed) replay cache, shared by all three transport sections below - the WS1
+// "replay cache" deliverable. A fresh temp directory per run keeps the sample self-contained;
+// a real deployment would point `directory` at a path that survives a process restart.
+const nonceCacheDir = mkdtempSync(join(tmpdir(), 'a2a-sample-nonces-'));
+const makeNonceCache = () => new FileNonceCacheProvider({ directory: nonceCacheDir });
 
 const line = (s) => console.log(s);
 const section = (title) => line(`\n== ${title} ==`);
@@ -69,7 +88,7 @@ function newExecutor() {
 // === 1. JSON-RPC: real client, real Express server, through the reusable gate + interceptor ===
 section('JSON-RPC transport');
 {
-	const nonceCache = new InMemoryNonceCache();
+	const nonceCache = makeNonceCache();
 	const agentCard = (url) => ({
 		name: 'sample (JSON-RPC)', description: 'x', version: '1.0.0', provider: undefined, documentationUrl: '',
 		supportedInterfaces: [{ url, protocolBinding: 'JSONRPC', tenant: '', protocolVersion: '1.0' }],
@@ -80,7 +99,7 @@ section('JSON-RPC transport');
 	});
 	const { count, executor } = newExecutor();
 	const store = new InMemoryTaskStore();
-	const userBuilder = createVerifyingUserBuilder({ resolveKey, resolveDidKeys, expectedAudience: SERVER_DID, consumeNonceIfFresh: nonceCache.consume });
+	const userBuilder = createVerifyingUserBuilder({ resolveKey, resolveDidKeys, expectedAudience: SERVER_DID, consumeNonceIfFresh: nonceCache.consume.bind(nonceCache) });
 	const handler = withAgentIdentity(new DefaultRequestHandler(agentCard('http://x'), store, executor), {
 		serverDid: SERVER_DID, serverKid: server.kid, privateKey: server.cryptoKey, publicKey: server.priv.d, cryptoProvider: new NodeCryptoProvider(),
 	});
@@ -114,8 +133,8 @@ section('REST transport');
 		defaultInputModes: ['text/plain'], defaultOutputModes: ['text/plain'], skills: [], signatures: [] };
 	const { count, executor } = newExecutor();
 	const store = new InMemoryTaskStore();
-	const nonceCache = new InMemoryNonceCache();
-	const userBuilder = createVerifyingUserBuilder({ resolveKey, resolveDidKeys, expectedAudience: SERVER_DID, consumeNonceIfFresh: nonceCache.consume });
+	const nonceCache = makeNonceCache();
+	const userBuilder = createVerifyingUserBuilder({ resolveKey, resolveDidKeys, expectedAudience: SERVER_DID, consumeNonceIfFresh: nonceCache.consume.bind(nonceCache) });
 	const handler = withAgentIdentity(new DefaultRequestHandler(agentCard, store, executor), {
 		serverDid: SERVER_DID, serverKid: server.kid, privateKey: server.cryptoKey, publicKey: server.priv.d, cryptoProvider: new NodeCryptoProvider(),
 	});
@@ -147,8 +166,8 @@ section('gRPC transport');
 	});
 	const { count, executor } = newExecutor();
 	const store = new InMemoryTaskStore();
-	const nonceCache = new InMemoryNonceCache();
-	const userBuilder = createVerifyingGrpcUserBuilder({ resolveKey, resolveDidKeys, expectedAudience: SERVER_DID, consumeNonceIfFresh: nonceCache.consume });
+	const nonceCache = makeNonceCache();
+	const userBuilder = createVerifyingGrpcUserBuilder({ resolveKey, resolveDidKeys, expectedAudience: SERVER_DID, consumeNonceIfFresh: nonceCache.consume.bind(nonceCache) });
 	const handler = withAgentIdentity(new DefaultRequestHandler(agentCard('x'), store, executor), {
 		serverDid: SERVER_DID, serverKid: server.kid, privateKey: server.cryptoKey, publicKey: server.priv.d, cryptoProvider: new NodeCryptoProvider(),
 	});
@@ -238,4 +257,79 @@ line('packages/core/test/ledger-anchored.test.mjs uses - it is NOT a live networ
 	};
 	const result = await verifyLedgerAnchoredStatus(ENTRY, DID, { resolvers: [BASE], fetch: fetch_, primitives, now: () => NOW });
 	line(`synthetic check -> ${JSON.stringify(result)}`);
+}
+
+// === 6. The trust extension's per-DID checks: linkage + DLR manifest + proof-checked status ===
+section('Trust extension checks (reciprocal linkage + DLR manifest + signed status - SYNTHETIC)');
+line('No cheqd DID has a real reciprocal alsoKnownAs link to this sample\'s did:web identity, and');
+line('no TrustConfigManifest/CapabilityManifest/ConformanceManifest DLR has been found live on');
+line('testnet (see README.md) - so this section builds synthetic linkage + manifest fixtures,');
+line('clearly labelled. The status check is different: it uses a BitstringStatusListCredential');
+line('signed with the REAL (not reimplemented) signEddsaJcs2022 from cheqd/did-provider-cheqd\'s');
+line('not-yet-merged #658 branch (see fixtures/bitstring-status-list-eddsa-jcs-2022.json and');
+line('evidence/status-list/mint-fixture.mjs in the a2a-drafts working repo) - once #658 ships a');
+line('real signed list, this fixture is replaced and nothing here changes.');
+{
+	const ANCHORED_DID = 'did:cheqd:testnet:0c3581f0-011f-4263-b1ca-15ad70d54ede';
+	const TRUST_CONFIG_REF = `${ANCHORED_DID}?resourceName=TrustConfig&resourceType=TrustConfigManifest`;
+
+	// Synthetic reciprocal linkage: SERVER_DID's did:web document and the anchored did:cheqd
+	// document each name the other in alsoKnownAs. Not live - no funded testnet account to
+	// actually anchor this (same constraint noted throughout evidence/status-list/README.md).
+	const linkageDocs = {
+		[SERVER_DID]: { id: SERVER_DID, alsoKnownAs: [ANCHORED_DID] },
+		[ANCHORED_DID]: { id: ANCHORED_DID, alsoKnownAs: [SERVER_DID] },
+	};
+
+	// Synthetic DLR manifest resolver: same resolver-response shape resolve-manifest.ts expects
+	// from a real `/1.0/identifiers` endpoint, fabricated rather than fetched.
+	const manifestContent = { acceptedIssuers: [ANCHORED_DID], acceptedDidMethods: ['did:cheqd', 'did:web'] };
+	const manifestBytes = Buffer.from(JSON.stringify(manifestContent));
+	const manifestChecksum = createHash('sha256').update(manifestBytes).digest('hex');
+	const manifestResourceId = 'c9b1a9a0-7b7a-4b1a-9a9a-0a9a0a9a0a9a';
+	const manifestMeta = {
+		dereferencingMetadata: { retrieved: new Date().toISOString() },
+		contentMetadata: {
+			linkedResourceMetadata: [{
+				resourceId: manifestResourceId, resourceName: 'TrustConfig', resourceType: 'TrustConfigManifest',
+				resourceVersion: '2026-11-01T00:00:00Z', checksum: manifestChecksum, nextVersionId: null,
+			}],
+		},
+	};
+	const manifestCache = createManifestCache({
+		resolvers: ['https://resolver.synthetic.example/1.0/identifiers'],
+		fetch: async (url) => {
+			if (url.includes('resourceMetadata=true')) return { status: 200, body: Buffer.from(JSON.stringify(manifestMeta)) };
+			if (url.includes('/resources/')) return { status: 200, body: manifestBytes };
+			return { status: 404, body: new Uint8Array() };
+		},
+		primitives: {
+			sha256Hex: (bytes) => createHash('sha256').update(bytes).digest('hex'),
+			decodeUtf8: (bytes) => new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+		},
+	});
+
+	// The REAL #658-branch-signed status fixture.
+	const fixturePath = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'bitstring-status-list-eddsa-jcs-2022.json');
+	const statusFixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
+	const checkStatus = async (canonicalDid) => {
+		const checker = createCheqdStatusChecker({
+			resolveDidCheqd: async (did) =>
+				did === statusFixture.did ? { id: statusFixture.did, verificationMethod: [{ id: statusFixture.kid, publicKeyJwk: statusFixture.publicKeyJwk }] } : null,
+			fetch: async (url) => (url === statusFixture.credential.id ? { ok: true, status: 200, json: async () => statusFixture.credential } : { ok: false, status: 404, json: async () => ({}) }),
+		});
+		// canonicalDid is unused by this fixture's single entry - a real deployment maps the
+		// verified caller's DID to its own status entry.
+		void canonicalDid;
+		return checker(statusFixture.entries.clearIndex1);
+	};
+
+	const deps = { resolveDidDocument: async (did) => linkageDocs[did] ?? null, manifestCache, checkStatus };
+	const activation = { anchoredDid: ANCHORED_DID, trustConfigRef: TRUST_CONFIG_REF, statusCheck: 'required' };
+	const direct = await verifyTrustExtension(SERVER_DID, activation, deps);
+	line(`verifyTrustExtension(SERVER_DID) -> ${JSON.stringify(direct)}`);
+
+	const cache = createTrustExtensionCache(deps);
+	const cached = await cache.get(SERVER_DID, activation);
+	line(`createTrustExtensionCache.get(SERVER_DID) -> ${JSON.stringify(cached)} (cached for subsequent calls)`);
 }
