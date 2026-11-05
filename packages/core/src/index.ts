@@ -9,6 +9,7 @@
 
 export * from './status/ledger-anchored.js';
 export * from './status/status-list-resolver.js';
+export * from './status/eddsa-jcs-status.js';
 export * from './agent-card/retrieve-public-key.js';
 export * from './linkage/reciprocal-linkage.js';
 export * from './dlr/resolve-manifest.js';

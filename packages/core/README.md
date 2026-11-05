@@ -37,6 +37,16 @@ Shared identity core. See the [repository README](../../README.md) for how the p
   Atomic via `fs.open(path, 'wx')`. 12 tests, including 20-way concurrent `consume()`.
 - `src/did-cheqd/resolve.ts` — a `did:cheqd` resolver for the Agent Card resolver's opt-in slot.
   Confirmed against the real public `resolver.cheqd.net`, not just a fake one. 9 tests.
+- `src/status/eddsa-jcs-status.ts` — `createCheqdStatusChecker`: the proof-checked alternative
+  to `ledger-anchored.ts`'s checksum-only trust, wiring `@kya-os/mcp`'s generic
+  `createStatusListProofVerifier`/`createRevocationChecker` to this package's `did:cheqd`
+  resolver. `did-provider-cheqd` does not yet produce a `BitstringStatusListCredential` whose
+  proof covers `encodedList` (cheqd/did-provider-cheqd#657); this module is written against the
+  format its open, unmerged fix (#658) produces, confirmed directly against that branch's own
+  signer. 4 tests in `test/eddsa-jcs-status.test.mjs`, against a fixture signed with #658's real
+  code (`test/fixtures/bitstring-status-list-eddsa-jcs-2022.json` — see that file's generating
+  script, `evidence/status-list/mint-fixture.mjs`, in the `a2a-drafts` working repo). Once #658
+  ships a real signed list on-chain, swap the fixture for live data; the verifier is unchanged.
 
 ## License
 
