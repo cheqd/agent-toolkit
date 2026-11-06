@@ -28,17 +28,17 @@ export interface WireRequest {
 	path?: string;
 }
 
-function methodAndParamsFor(req: WireRequest): { method?: string; params?: unknown } {
-	const body = req.body ?? {};
+function methodAndParamsFor(req: WireRequest | null | undefined): { method?: string; params?: unknown } {
+	const body = req?.body ?? {};
 	if (body.method !== undefined) return { method: body.method, params: body.params };
 	// REST: no top-level method, so it's implied by the route (restHandler's own convention).
-	if (/message:send$/.test(req.path ?? '')) return { method: 'SendMessage', params: body };
-	if (/message:stream$/.test(req.path ?? '')) return { method: 'SendStreamingMessage', params: body };
+	if (/message:send$/.test(req?.path ?? '')) return { method: 'SendMessage', params: body };
+	if (/message:stream$/.test(req?.path ?? '')) return { method: 'SendStreamingMessage', params: body };
 	return {};
 }
 
 export function createVerifyingUserBuilder(deps: GateVerifyDeps) {
-	return async function verifyingUserBuilder(req: WireRequest): Promise<GateUser> {
+	return async function verifyingUserBuilder(req: WireRequest | null | undefined): Promise<GateUser> {
 		const { method, params } = methodAndParamsFor(req);
 		if (!method || !WRITE_METHODS.has(method)) {
 			return { isAuthenticated: false, userName: '' };
