@@ -1,0 +1,236 @@
+# Design decisions
+
+> **DRAFT.** This covers the TypeScript implementation of cheqd's A2A trust-binding spec and
+> its AP2 (Agent Payments Protocol) extension, across `packages/core`, `packages/a2a` and
+> `packages/ap2`. Every package is pre-release (`private: true`); nothing here has shipped.
+> Written for an external architect reviewing code quality and key design decisions before the
+> PR stack (`#16` → `#17` → `#18` → `#20` → `#21`) merges.
+
+## How to read this
+
+Each decision below is Context / Decision / Why / Consequences / Revisit-if, in the order the
+code was built. It is not a line-by-line design doc — it is the set of choices most likely to
+be wrong, or most load-bearing if they are. File references point at where to go deep;
+`docs/security/threat-model.md` and each package's own README cover ground this document
+doesn't repeat.
+
+---
+
+## D1. Where request verification runs on the A2A server
+
+**Context.** `@a2a-js/sdk` offers several places to hook request verification in. A naive
+choice (an `AgentExecutor` decorator) is unsafe: the SDK appends an incoming message to a live
+task's history *before* the executor runs, so a throwing executor still leaves an unverified
+message written into task state — the caller sees a failed task, not a rejected request.
+
+**Decision.** Verification happens in a `userBuilder` that reads the raw wire body, verifies
+it, and returns either the verified DID or an unauthenticated user carrying the rejection
+reason — it never throws. A separate enforcing wrapper over `A2ARequestHandler` rejects any
+write that lacks a verified identity, then makes the response proof over the final result.
+
+**Why.** It is the only approach tested (five were) that both verifies the actual wire payload
+(not an SDK-reserialised approximation, which silently rejected 7/10 valid real-world payload
+shapes in testing — unknown fields, numeric enums, explicit defaults) and runs strictly before
+the SDK touches task state. Fails closed if the `userBuilder` isn't installed. No fork or patch
+of the SDK.
+
+**Consequences.** No HTTP 401 — the SDK has no auth error code, so failures surface as
+JSON-RPC errors under HTTP 200. An Express middleware form exists as an optional add-on where a
+real 401 matters. The `userBuilder` seam is Express-specific for the JSON-RPC transport; REST
+and gRPC each needed their own equivalent (`packages/a2a/src/user-builder.ts`,
+`grpc-user-builder.ts`).
+
+**Revisit if** the SDK changes how it builds request context, or adds a native auth error code.
+
+---
+
+## D2. Agent Card key resolution trusts `kid`, never `jku`
+
+**Context.** A2A §8.4.3, as published, says to retrieve the signing key "using the `kid` and
+`jku`" headers. `jku` lets the *signer* nominate its own trust root — a verifier that fetches
+whatever URL the signer supplies verifies against a key the attacker controls, not one the
+caller actually trusts (CWE-863).
+
+**Decision.** `createRetrievePublicKey` (`packages/core/src/agent-card/retrieve-public-key.ts`)
+accepts a `jku` argument only for call-shape compatibility with the SDK's callback signature,
+and never reads it. Resolution is strictly by `kid`, against DID documents (`did:web`, `did:key`,
+opt-in `did:cheqd`) the caller has chosen to trust.
+
+**Why.** The spec's own wording is unsafe to implement literally. This is a deliberate,
+documented deviation, not an oversight — see the module's own header comment.
+
+**Consequences.** Any future spec revision that makes `jku` meaningful would need an explicit,
+separate trust decision — not a default resolver change.
+
+---
+
+## D3. Status/revocation checks are fail-closed, against a fixture pending a real on-chain list
+
+**Context.** cheqd's on-chain status-list resource is currently a bare, unsigned record — not
+the signed VC envelope the obvious resolver (`createCheqdStatusListResolver`) requires. That
+resolver throws on the real testnet resource today. Fixing this (`did-provider-cheqd#657`/
+`#658`) is an external dependency with no merge date.
+
+**Decision.** Built against `@kya-os/mcp`'s generic `createStatusListProofVerifier` +
+`createRevocationChecker` pair instead (not the cheqd-specific resolver, which turned out to
+have its own, different, undocumented wire format). `packages/core/src/status/*` wires this to
+the `did:cheqd` resolver. Tested against a fixture signed with `did-provider-cheqd#658`'s own
+(unmerged) branch code — not a hand-rolled stand-in for it.
+
+**Why.** The architecture doesn't need to wait on an external PR; only the presence of a *real*
+signed list on-chain does. Checks fail closed (reject) rather than skip when status can't be
+resolved.
+
+**Consequences.** Until `#657`/`#658` land, there is no real on-chain signed status list in
+production use anywhere in this stack — only the fixture. Tracked as a known gap, not silently
+assumed away (`docs/security/threat-model.md`, "Known gaps").
+
+**Revisit if** `#657`/`#658` merge — swap the fixture signer for the real resolver output; no
+architecture change expected.
+
+---
+
+## D4. Replay protection is a persistent, short-TTL cache — scoped to one A2A call
+
+**Context.** The SDK ships only dev-only in-memory nonce caches.
+
+**Decision.** `FileNonceCacheProvider` (`packages/core/src/replay/file-nonce-cache.ts`),
+persistent, process-restart-safe, single-call/short-TTL (60s) scope — wired into all three
+transports in `sample/run.mjs`.
+
+**Why.** Matches the spec's proof lifetime exactly: one A2A request proof is meant to be used
+once, briefly. Deliberately **not** reused for AP2 mandate consumption (see D8) — a mandate's
+lifetime is a different shape entirely.
+
+**Consequences.** Not cross-process-atomic beyond what exclusive-create file semantics give you;
+fine for the single-node deployment this targets, would need a real lock service multi-node.
+
+---
+
+## D5. AP2 key continuity reuses the A2A proof's own key-fusion primitive
+
+**Context.** AP2's open Payment Mandate carries a `cnf` claim (RFC 7800). The A2A gate already
+performs triple-key fusion (`token.cnf.jkt === proof.cnf.jkt === thumbprint(resolve(kid))`) to
+establish "this proof and this token name the same key."
+
+**Decision.** `packages/ap2/src/cnf-fusion.ts` reuses the identical RFC 7638 thumbprint
+comparison, but operates on whichever already-resolved agent key JWK the caller supplies — it
+does not reach into `@cheqd/agent-identity-a2a`'s gate internals.
+
+**Why.** One notion of "same key" shared across A2A and AP2, without coupling the two packages'
+internals together.
+
+---
+
+## D6. The authorised-secondary-key path is a credential, not a DID-document key, and gets its own trust tier
+
+**Context.** AP2 needs to support a payment-specific key that differs from the agent's primary
+signing key. Two options existed: add it as another `verificationMethod` in the agent's DID
+document (an on-chain write via `did-provider-cheqd`), or issue it as a short-lived credential.
+Separately, the A2A spec's existing `L3`/`L3-minus` trust tiers assume the proof-signing key
+and the bound key are the *same* key — neither tier has defined meaning for a mandate
+deliberately bound to a *different*, authorised key.
+
+**Decision.** The secondary key is a short-lived, self-issued **Agent Payment Key Credential**
+(`packages/ap2/src/payment-key-authorization.ts`) — signed by the agent's primary key, status-
+checkable, not written on-chain. It establishes a **new, distinct trust tier**
+(`authorised-secondary-key`), verified by checking the *authorisation chain*
+(primary key → signed credential → secondary key), not key identity.
+
+**Why.** The credential path reuses this codebase's own status-list/revocation machinery
+directly (D3), rather than needing an on-chain DID-document write to rotate a payment key.
+Giving it its own tier — rather than overloading `L3`/`L3-minus` — avoids silently redefining
+what those tiers mean for every other caller of the A2A spec.
+
+**Consequences.** `verifyAgentPaymentKeyCredential` fails closed on a *missing*
+`credentialStatus`, not only on an explicit revocation — an agent payment key with no status
+mechanism at all is treated as unverifiable, not implicitly trusted.
+
+---
+
+## D7. AP2 mandate-presentation verification is scoped to one delegation hop
+
+**Context.** AP2 layers its *own*, separate, unratified delegation-chain extension
+(`draft-gco-oauth-delegate-sd-jwt-00`: `~~`-joined, multi-hop tokens) on top of base SD-JWT-VC
+(RFC 9901). This is a materially larger protocol than RFC 9901 itself, with no reference
+TypeScript implementation to check against.
+
+**Decision.** Implemented the single-hop case AP2's own `models/mandate.py` documents directly
+— a Key Binding JWT whose `transaction_data` claim binds the presentation to a specific closed
+mandate's content — using `@sd-jwt/core` (OpenWallet Foundation) for the base RFC 9901 crypto.
+The multi-hop `~~`-chain case (agent-to-sub-agent re-delegation) is explicitly out of scope.
+
+**Why.** Single-hop covers what an autonomous payment agent needs for *its own* transaction —
+the realistic near-term case — without reimplementing an unratified protocol from scratch on a
+"trust me" basis. Using a real third-party library for the base crypto, rather than hand-rolling
+it, was a deliberate choice once this scoping was settled.
+
+**Consequences.** Agent-to-sub-agent re-delegation is not supported. This is documented in
+`packages/ap2/README.md` and is the single largest functional gap in the AP2 package, not an
+implementation detail to discover later.
+
+**Revisit if** a reference TypeScript (or otherwise checkable) implementation of the
+delegation-chain draft becomes available, or the draft is ratified.
+
+---
+
+## D8. AP2 mandate consumption tracking is its own store, not a reuse of the A2A replay cache
+
+**Context.** `budget` and `agent_recurrence` constraints need to track a mandate's cumulative
+use (`total_amount`, `total_uses`, `last_used_date`) across multiple calls — unlike an A2A proof
+nonce, which is single-call and short-TTL (D4).
+
+**Decision.** `packages/ap2/src/mandate-consumption-store.ts` — its own store, its own lifetime
+model, with a separate one-time-use `consumeOnce` (atomic exclusive-create) alongside a
+read-modify-write `recordUse`, explicitly documented as **not** cross-process-atomic.
+
+**Why.** A mandate's consumption lifetime and an A2A proof's replay window are different
+concepts with different scopes; conflating them would have been the easier-looking but wrong
+move.
+
+**Consequences.** `recordUse`'s non-atomicity is a real constraint for a multi-process
+deployment — flagged in the module's own comment, not hidden.
+
+---
+
+## D9. Full mandate-chain verification (all 10 constraints, both mandate pairs) was built now, not deferred to a minimal `cnf`-only slice
+
+**Context.** A narrower scope — verify `cnf` continuity only, defer the full open/closed
+constraint-chain verification (`amount_range`, `budget`, `allowed_payees`,
+`allowed_payment_instruments`, `allowed_pisps`, `agent_recurrence`, `execution_date`,
+`payment_reference`, `allowed_merchants`, `line_items`) — was available and would have shipped
+faster.
+
+**Decision.** Built the full chain now: both `PaymentMandateChain` and `CheckoutMandateChain`,
+all 10 evaluators, ported directly from AP2's own JSON Schema and generated Pydantic models
+(not reconstructed from spec prose) — including preserving an inconsistency upstream itself has
+(`Budget` in major units vs. `AmountRange` in minor units), rather than "fixing" it.
+
+**Why.** `cnf`-only verification establishes *who* is presenting a mandate but not *what it
+actually authorises* — a materially weaker guarantee that would need revisiting almost
+immediately for anything beyond a toy case.
+
+**Consequences.** Larger surface to review and maintain than the minimal slice. Mitigated by
+fuzzing all ten evaluators and the max-flow line-item matcher directly
+(`conformance/fuzz-proof-parsing.mjs`) — see `docs/security/threat-model.md`.
+
+**Note on `line_items`:** the matcher (`packages/ap2/src/max-flow.ts`, Dinic's algorithm) has
+genuinely surprising real semantics, faithfully ported from upstream: it checks that every CART
+item can be assigned to *some* requirement slot, not that every requirement slot gets filled.
+This is documented in the module's own comment because it is easy to misread as the reverse.
+
+---
+
+## What this document doesn't cover
+
+- **The full threat model and negative-vector suite** — `docs/security/threat-model.md`,
+  `conformance/vectors/a2a-gate.json`, `conformance/run-a2a-gate-vectors.mjs`.
+- **Known, named gaps** (KMS/HSM signing unproven, real on-chain signed status list pending an
+  external PR, task-addressed method identity, streaming/push out of scope) —
+  `docs/security/threat-model.md`, "Known gaps".
+- **Operational guidance** (key rotation, incident response, reading gate rejections) —
+  `docs/security/runbook.md`.
+
+## License
+
+[Apache 2.0](../LICENSE)
