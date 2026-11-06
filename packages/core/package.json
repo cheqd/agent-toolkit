@@ -2,7 +2,7 @@
   "name": "@cheqd/agent-identity",
   "version": "0.0.0",
   "private": true,
-  "description": "DRAFT \u2014 shared identity core. Nothing is implemented.",
+  "description": "DRAFT \u2014 shared identity core. Early exploration, not reviewed or stable.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",

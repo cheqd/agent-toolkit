@@ -1,0 +1,9 @@
+{
+  "name": "a2a-status-list-evidence",
+  "private": true,
+  "type": "module",
+  "description": "Research scripts testing status-list verification against a real cheqd testnet resource and @kya-os/mcp. Not a package.",
+  "dependencies": {
+    "@kya-os/mcp": "1.21.2"
+  }
+}
