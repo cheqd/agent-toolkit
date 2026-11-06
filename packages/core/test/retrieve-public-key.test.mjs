@@ -140,6 +140,38 @@ test('did:cheqd resolves via the injected resolver when configured', async () =>
 	assert.equal(jwk.x, 'abc');
 });
 
+test('did:cheqd resolves a legacy Ed25519VerificationKey2018 publicKeyBase58 verification method', async () => {
+	// The real public cheqd testnet resolver still serves this format on at least one live DID
+	// (did:cheqd:testnet:0c3581f0-011f-4263-b1ca-15ad70d54ede, checked 4 November 2026) - not a
+	// hypothetical shape.
+	const { raw, jwkX } = rawEd25519PublicKey();
+	const did = 'did:cheqd:testnet:0c3581f0-011f-4263-b1ca-15ad70d54ede';
+	const kid = `${did}#key-1`;
+	const resolveDidCheqd = async (requested) =>
+		requested === did
+			? {
+					id: did,
+					verificationMethod: [{ id: kid, type: 'Ed25519VerificationKey2018', controller: did, publicKeyBase58: base58Encode(raw) }],
+				}
+			: null;
+	const retrieve = createRetrievePublicKey({ resolveDidCheqd });
+	const jwk = await retrieve(kid);
+	assert.equal(jwk.kty, 'OKP');
+	assert.equal(jwk.crv, 'Ed25519');
+	assert.equal(jwk.x, jwkX);
+});
+
+test('did:cheqd rejects a publicKeyBase58 that does not decode to a 32-byte Ed25519 key', async () => {
+	const did = 'did:cheqd:testnet:abc';
+	const kid = `${did}#key-1`;
+	const resolveDidCheqd = async () => ({
+		id: did,
+		verificationMethod: [{ id: kid, publicKeyBase58: base58Encode(new Uint8Array(16)) }],
+	});
+	const retrieve = createRetrievePublicKey({ resolveDidCheqd });
+	await assert.rejects(() => retrieve(kid));
+});
+
 test('an unsupported DID method is rejected', async () => {
 	const retrieve = createRetrievePublicKey();
 	await assert.rejects(() => retrieve('did:example:123#key-1'));

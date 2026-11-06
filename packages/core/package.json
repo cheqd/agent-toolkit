@@ -2,7 +2,7 @@
   "name": "@cheqd/agent-identity",
   "version": "0.0.0",
   "private": true,
-  "description": "DRAFT \u2014 shared identity core. Early exploration, not reviewed or stable.",
+  "description": "DRAFT — shared identity core. Early exploration, not reviewed or stable.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,7 +16,13 @@
   "files": [
     "dist"
   ],
+  "dependencies": {
+    "@kya-os/mcp": "1.21.2"
+  },
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5"
   }
 }

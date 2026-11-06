@@ -21,21 +21,34 @@ type ResponseProofProfile = NonNullable<GenerateProofOptions>['profile'];
 import type { CryptoProvider } from '@kya-os/mcp/providers';
 import { randomBytes } from 'node:crypto';
 import { coveredResult, RESPONSE_PROOF_META_KEY } from './covered-request.js';
+import type { TrustExtensionActivation, TrustExtensionCache } from './trust-extension.js';
 import type { GateUser, VerifiedCaller } from './types.js';
 
 interface UserCarryingContext extends ServerCallContext {
 	user: GateUser;
 }
 
-function enforce(ctx: ServerCallContext): VerifiedCaller {
+/** Applies the trust extension's checks (spec §4.6 step 10) if activated for this deployment. */
+export interface TrustExtensionGate {
+	readonly cache: TrustExtensionCache;
+	readonly activation: TrustExtensionActivation;
+}
+
+async function enforce(ctx: ServerCallContext, trustExtension?: TrustExtensionGate): Promise<VerifiedCaller> {
 	const user = (ctx as UserCarryingContext).user;
-	if (user?.verified) return user.verified;
-	const reason = user?.rejection ?? 'no_verifier_installed';
-	// Fails closed: a missing userBuilder looks identical to a missing proof, by design, not convention.
-	if (reason === 'missing' || reason === 'no_verifier_installed') {
-		throw new ExtensionSupportRequiredError(`proof_required: ${reason}`);
+	if (!user?.verified) {
+		const reason = user?.rejection ?? 'no_verifier_installed';
+		// Fails closed: a missing userBuilder looks identical to a missing proof, by design, not convention.
+		if (reason === 'missing' || reason === 'no_verifier_installed') {
+			throw new ExtensionSupportRequiredError(`proof_required: ${reason}`);
+		}
+		throw new RequestMalformedError(`proof_invalid: ${reason}`);
 	}
-	throw new RequestMalformedError(`proof_invalid: ${reason}`);
+	if (trustExtension) {
+		const result = await trustExtension.cache.get(user.verified.did, trustExtension.activation);
+		if (!result.ok) throw new RequestMalformedError(`trust_extension_failed: ${result.reasons.join(',')}`);
+	}
+	return user.verified;
 }
 
 export interface ResponseProofOptions {
@@ -54,8 +67,16 @@ export interface ResponseProofOptions {
  * userBuilder did not verify, and `sendMessage` additionally attaches a response proof over the
  * final result. Every other method passes through unchanged - note the
  * (currently unresolved) task-addressed-method identity gap this leaves.
+ *
+ * `trustExtension`, when supplied, additionally rejects a verified caller whose cached §5.2
+ * linkage/manifest/status checks are not `ok` - optional, since the trust extension itself is
+ * optional per the Agent Card (spec §5.1).
  */
-export function withAgentIdentity(inner: A2ARequestHandler, responseProof: ResponseProofOptions): A2ARequestHandler {
+export function withAgentIdentity(
+	inner: A2ARequestHandler,
+	responseProof: ResponseProofOptions,
+	trustExtension?: TrustExtensionGate,
+): A2ARequestHandler {
 	const generator = new ProofGenerator(
 		{
 			did: responseProof.serverDid,
@@ -69,7 +90,7 @@ export function withAgentIdentity(inner: A2ARequestHandler, responseProof: Respo
 		get(target, prop, receiver) {
 			if (prop === 'sendMessage') {
 				return async (params: Parameters<A2ARequestHandler['sendMessage']>[0], ctx: ServerCallContext) => {
-					const caller = enforce(ctx);
+					const caller = await enforce(ctx, trustExtension);
 					const result: unknown = await target.sendMessage(params, ctx);
 					const resultObj = result as Record<string, unknown>;
 					if (!result || !('status' in resultObj)) return result; // a Message, not a Task - nothing to prove here yet
@@ -99,7 +120,7 @@ export function withAgentIdentity(inner: A2ARequestHandler, responseProof: Respo
 			}
 			if (prop === 'sendMessageStream') {
 				return async function* (params: Parameters<A2ARequestHandler['sendMessageStream']>[0], ctx: ServerCallContext) {
-					enforce(ctx);
+					await enforce(ctx, trustExtension);
 					// streaming is out of scope for now - no response proof is made
 					// here, by construction, not just by convention (evidence/gate-order/
 					// slice-userbuilder-wrapper.mjs confirmed this already for the throwaway version).

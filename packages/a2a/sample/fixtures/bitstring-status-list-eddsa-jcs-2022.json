@@ -1,0 +1,50 @@
+{
+	"did": "did:cheqd:testnet:0c3581f0-011f-4263-b1ca-15ad70d54ede",
+	"kid": "did:cheqd:testnet:0c3581f0-011f-4263-b1ca-15ad70d54ede#key-1",
+	"publicKeyJwk": {
+		"crv": "Ed25519",
+		"x": "XkHIZEQXggAj2KETfkryRL-GcxBqGpliZJ_0sdEGaeI",
+		"kty": "OKP"
+	},
+	"credential": {
+		"@context": [
+			"https://www.w3.org/2018/credentials/v1",
+			"https://www.w3.org/ns/credentials/status/v1"
+		],
+		"id": "https://resolver.cheqd.net/1.0/identifiers/did:cheqd:testnet:0c3581f0-011f-4263-b1ca-15ad70d54ede?resourceName=a2a-sample-employee-status&resourceType=BitstringStatusListCredential",
+		"type": [
+			"VerifiableCredential",
+			"BitstringStatusListCredential"
+		],
+		"issuer": "did:cheqd:testnet:0c3581f0-011f-4263-b1ca-15ad70d54ede",
+		"issuanceDate": "2026-11-05T20:14:43.286Z",
+		"credentialSubject": {
+			"type": "BitstringStatusList",
+			"statusPurpose": "revocation",
+			"statusSize": 1,
+			"encodedList": "uH4sIAAAAAAAAE-3BIQEAAAACIKc73RkWoAEAAAAAAAAAAAAAAAAAAADeBuRZQ2cAQAAA"
+		},
+		"proof": {
+			"type": "DataIntegrityProof",
+			"cryptosuite": "eddsa-jcs-2022",
+			"created": "2026-11-05T20:14:43.291Z",
+			"verificationMethod": "did:cheqd:testnet:0c3581f0-011f-4263-b1ca-15ad70d54ede#key-1",
+			"proofPurpose": "assertionMethod",
+			"proofValue": "z2QDBhgEorKxR7vWAPFUdpA7sj8m7poT5LuP8dtJZTAgKCxf3JV8vdzyaJdveoavqzWhpBqqsDyxPCqATQJnVyon1"
+		}
+	},
+	"entries": {
+		"revokedIndex0": {
+			"type": "BitstringStatusListEntry",
+			"statusPurpose": "revocation",
+			"statusListCredential": "https://resolver.cheqd.net/1.0/identifiers/did:cheqd:testnet:0c3581f0-011f-4263-b1ca-15ad70d54ede?resourceName=a2a-sample-employee-status&resourceType=BitstringStatusListCredential",
+			"statusListIndex": "0"
+		},
+		"clearIndex1": {
+			"type": "BitstringStatusListEntry",
+			"statusPurpose": "revocation",
+			"statusListCredential": "https://resolver.cheqd.net/1.0/identifiers/did:cheqd:testnet:0c3581f0-011f-4263-b1ca-15ad70d54ede?resourceName=a2a-sample-employee-status&resourceType=BitstringStatusListCredential",
+			"statusListIndex": "1"
+		}
+	}
+}

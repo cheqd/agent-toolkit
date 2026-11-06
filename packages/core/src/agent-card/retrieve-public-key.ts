@@ -30,6 +30,7 @@ export interface MinimalVerificationMethod {
 	readonly controller?: string;
 	readonly publicKeyJwk?: Record<string, unknown>;
 	readonly publicKeyMultibase?: string;
+	readonly publicKeyBase58?: string;
 }
 
 /** The shape `verifyAgentCardSignature` accepts back - a plain JWK needs no `jose` dependency. */
@@ -90,6 +91,7 @@ function keyFromDocument(document: MinimalDidDocument, kid: string): PublicKeyJw
 		return jwk as PublicKeyJwk;
 	}
 	if (method.publicKeyMultibase) return jwkFromEd25519Multibase(method.publicKeyMultibase);
+	if (method.publicKeyBase58) return jwkFromEd25519Base58(method.publicKeyBase58);
 	fail('unsupported_key_encoding');
 }
 
@@ -168,6 +170,17 @@ function jwkFromEd25519Multibase(multibase: string): PublicKeyJwk {
 	// multi-byte varint continuation since 0xed01 < 0x4000).
 	if (bytes.length !== 34 || bytes[0] !== 0xed || bytes[1] !== 0x01) fail('unsupported_key_type');
 	const x = base64UrlEncode(bytes.slice(2));
+	return { kty: 'OKP', crv: 'Ed25519', x };
+}
+
+/** `publicKeyBase58` (the `Ed25519VerificationKey2018` legacy encoding, no multicodec prefix,
+ * no `z` multibase marker - plain base58btc over the raw 32-byte Ed25519 public key). Still
+ * published by real DIDs on the public cheqd testnet resolver as of November 2026, alongside the
+ * newer `publicKeyMultibase`/`publicKeyJwk` forms. */
+function jwkFromEd25519Base58(encoded: string): PublicKeyJwk {
+	const bytes = base58Decode(encoded);
+	if (bytes.length !== 32) fail('unsupported_key_type');
+	const x = base64UrlEncode(bytes);
 	return { kty: 'OKP', crv: 'Ed25519', x };
 }
 
