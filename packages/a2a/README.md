@@ -17,12 +17,16 @@ A2A binding: a request/response proof gate for `@a2a-js/sdk`, and the matching c
 - `src/client.ts` — the client-side `CallInterceptor`.
 - `evidence/` — the research scripts behind all of this, runnable against real
   `@a2a-js/sdk` and `@kya-os/mcp`.
+- `smoke-test-agent-card.mjs` — DID-backed Agent Card key resolution
+  (`@cheqd/agent-identity`'s `createRetrievePublicKey`) wired into the real SDK function.
+  `did:web` and `did:key` work for real; `did:cheqd` is opt-in (not wired up here yet).
 
 ## What's not here yet
 
-DID-backed Agent Card key resolution, DID-Linked Resource policy, status-list checks, a
-persistent replay cache, REST/gRPC/streaming forms beyond what's smoke-tested in `evidence/`,
-and a runnable sample against cheqd testnet.
+DID-Linked Resource policy, status-list checks wired into the gate (the check itself,
+`verifyLedgerAnchoredStatus`, exists in `@cheqd/agent-identity` but isn't called from here yet),
+a persistent replay cache, REST/gRPC/streaming forms beyond what's smoke-tested in `evidence/`,
+`did:cheqd` resolution for the Agent Card resolver, and a runnable sample against cheqd testnet.
 
 ## License
 
