@@ -1,15 +1,9 @@
 name: "Lint"
 on:
-  pull_request:
-    branches:
-      - main
-      - develop
-  push:
-    branches:
-      - develop
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_call:
+defaults:
+  run:
+    shell: bash
 
 jobs:
   md-link-check:

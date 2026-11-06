@@ -1,9 +1,12 @@
 name: "DCO"
 on:
+  # Deliberately no `branches:` filter - PRs in this repo are routinely stacked on another open
+  # PR's branch rather than main/develop directly. A branches filter here meant this never ran on
+  # #17/#18/#20 at all (see Test's own history and cheqd/agent-toolkit#23). DCO specifically needs
+  # the pull_request event's base/head SHAs to diff the commit range, so unlike Lint/Build it
+  # can't move into the push-triggered dispatch.yml pipeline - it stays pull_request-triggered,
+  # just without the filter that broke it.
   pull_request:
-    branches:
-      - main
-      - develop
     types: [opened, reopened, synchronize, ready_for_review]
 
 jobs:
