@@ -15,3 +15,4 @@ export * from './linkage/reciprocal-linkage.js';
 export * from './dlr/resolve-manifest.js';
 export * from './replay/file-nonce-cache.js';
 export * from './did-cheqd/resolve.js';
+export * from './proof/eddsa-jcs-2022.js';

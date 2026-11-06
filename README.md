@@ -16,7 +16,7 @@ DID-anchored identity, delegation and per-request proof for agentic protocols.
 |---|---|---|
 | [`@cheqd/agent-identity`](./packages/core) | DID resolution, reciprocal `did:web` ↔ `did:cheqd` linkage, DID-Linked Resource policy, credential status, key resolution | Not started |
 | [`@cheqd/agent-identity-a2a`](./packages/a2a) | A2A binding: client interceptor, server executor gate, canonical request shape | Not started |
-| [`@cheqd/agent-identity-ap2`](./packages/ap2) | AP2 binding: `cnf` key continuity, mandate verification | Not started |
+| [`@cheqd/agent-identity-ap2`](./packages/ap2) | AP2 binding: `cnf` key continuity, authorised-secondary-key tier, open/closed mandate chain verification | Single-hop case built, draft |
 | [`conformance/`](./conformance) | Shared vectors | Not started |
 
 The two bindings both depend on the core and not on each other, so an AP2 consumer never installs the A2A SDK.

@@ -47,6 +47,11 @@ Shared identity core. See the [repository README](../../README.md) for how the p
   code (`test/fixtures/bitstring-status-list-eddsa-jcs-2022.json` — see that file's generating
   script, `evidence/status-list/mint-fixture.mjs`, in the `a2a-drafts` working repo). Once #658
   ships a real signed list on-chain, swap the fixture for live data; the verifier is unchanged.
+- `src/proof/eddsa-jcs-2022.ts` — `verifyEddsaJcs2022`: a generic `DataIntegrityProof`/
+  `eddsa-jcs-2022` verifier for an arbitrary document (not status-list-specific), the same W3C
+  Data Integrity construction `@kya-os/mcp/card`'s status-list verifier checks, generalised.
+  Used by `@cheqd/agent-identity-ap2`'s Agent Payment Key Credential verification, so that
+  construction is implemented once, not twice.
 
 ## License
 

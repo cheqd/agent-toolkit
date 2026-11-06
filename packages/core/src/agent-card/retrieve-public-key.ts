@@ -82,7 +82,10 @@ async function defaultFetchDidWeb(url: string) {
 	return fetch(url);
 }
 
-function keyFromDocument(document: MinimalDidDocument, kid: string): PublicKeyJwk {
+/** Exported for reuse by other modules that already hold a resolved DID document and a `kid`
+ * (e.g. `@cheqd/agent-identity-ap2`'s generic DataIntegrityProof verifier) - avoids re-deriving
+ * the same publicKeyJwk/Multibase/Base58 dispatch logic a second time. */
+export function keyFromDocument(document: MinimalDidDocument, kid: string): PublicKeyJwk {
 	const method = (document.verificationMethod ?? []).find((candidate) => methodId(candidate, document.id) === kid);
 	if (!method) fail('kid_not_in_document');
 	if (method.publicKeyJwk) {
