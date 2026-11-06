@@ -32,6 +32,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint (ESLint, with workspace dependencies actually installed)
+        run: npm run lint
+
       - name: Build (clean, not incremental)
         run: |
           find . -name "*.tsbuildinfo" -not -path "*/node_modules/*" -delete
