@@ -39,6 +39,8 @@ Neither would be forked. Both would be pinned.
 ```bash
 npm install
 npm run build
+npm run lint      # ESLint, also run in CI via Super Linter
+npm run format    # Prettier --check; `format:write` to fix - not CI-gated yet, see .prettierrc.json
 ```
 
 ## Contributing

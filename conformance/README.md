@@ -48,6 +48,7 @@ FUZZ_SEED=20261105 FUZZ_ITERATIONS=800 node conformance/fuzz-proof-parsing.mjs
 ```
 
 **Found two real issues on its first run** (5 November 2026), both fixed:
+
 - `createVerifyingUserBuilder`/`createVerifyingGrpcUserBuilder` threw instead of rejecting when
   the whole `req`/`call` argument was itself `null`/`undefined`, rather than just a malformed
   body - exactly the "a throwing userBuilder surfaces as an opaque HTTP 500" failure mode these

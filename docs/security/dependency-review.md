@@ -10,6 +10,21 @@
 113 prod dependencies, 1 dev
 ```
 
+## `npm audit`, 6 November 2026 (after adding lint tooling)
+
+```
+10 moderate severity vulnerabilities
+```
+
+All ten trace to one advisory: `minimatch` 7.0.0–11.0.0, a glob denial-of-service
+([GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)), pulled in
+transitively by `eslint`/`typescript-eslint`'s own dependency chain (`@eslint/config-array`,
+`@typescript-eslint/typescript-estree`). **Dev-tooling only** - `minimatch` is not a runtime
+dependency of any published package, so it ships in nobody's `node_modules` in production.
+`npm audit fix --force` offers a fix by downgrading `eslint` to `9.39.5`, which would also
+downgrade `typescript-eslint` below the version this repo's flat config
+(`eslint.config.mjs`) was written against - not taken. Re-check on `eslint`'s next release.
+
 ## Pinning
 
 Per `PLAN.md` §4 (WS0): "the interceptor and executor interfaces are public API, not internals" -
@@ -37,9 +52,11 @@ drift between the two.
 
 ## Not done
 
-- No automated `npm audit`/Dependabot gate in CI yet - this review is a manual snapshot, not a
-  standing check. Adding one is a release-pipeline change, deliberately not made in this pass
-  (see `docs/security/threat-model.md`'s scope note on CI).
+- No automated `npm audit` gate in CI yet - this review is a manual snapshot, not a standing
+  check. Dependabot itself is already configured (`.github/dependabot.yml`, weekly, `npm` +
+  `github-actions`). **CodeQL** (`.github/workflows/codeql.yml`, added 6 Nov) covers static
+  analysis of this repo's own code, not dependency vulnerabilities - the two are complementary,
+  neither substitutes for the other.
 - No SBOM generated.
 
 ## License

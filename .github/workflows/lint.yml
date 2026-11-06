@@ -49,3 +49,9 @@ jobs:
           VALIDATE_JSONC: true
           VALIDATE_MARKDOWN: true
           VALIDATE_YAML: true
+          # JS/TS linting is NOT done here - Super Linter's bundled ESLint config doesn't see
+          # this repo's eslint.config.mjs, doesn't run `npm ci`, and knows nothing of the
+          # workspace's npm-resolved imports or its actual Node 20 target - it flagged every
+          # workspace import as unresolvable and every modern Node API (fetch, structuredClone,
+          # error `cause`) as unsupported against a fallback baseline of Node 16. Linted for real,
+          # with dependencies actually installed, as an explicit `npm run lint` step in build.yml.
