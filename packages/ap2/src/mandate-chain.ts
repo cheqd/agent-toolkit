@@ -84,7 +84,9 @@ function extractParsedCheckoutObject(checkoutJwt: string): Checkout {
 	try {
 		decoded = JSON.parse(base64UrlDecode(parts[1] as string).toString('utf8'));
 	} catch (error) {
-		throw new Error(`Invalid JSON in checkout_jwt payload: ${error instanceof Error ? error.message : String(error)}`);
+		throw new Error(`Invalid JSON in checkout_jwt payload: ${error instanceof Error ? error.message : String(error)}`, {
+			cause: error,
+		});
 	}
 	if (typeof decoded !== 'object' || decoded === null) throw new Error('checkout_jwt payload failed schema validation: not an object');
 	const record = decoded as Record<string, unknown>;
