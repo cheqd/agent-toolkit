@@ -400,6 +400,90 @@ they were blocked on).
 
 ---
 
+## D14. A from-spec `org.kya-os/response-proof` engine, scoped narrowly
+
+**Context.** `wrapper.ts` (server, signs the response) and `client.ts` (client, verifies it)
+depend on a SECOND, different proof module from `@kya-os/mcp` - `src/proof/generator.ts`'s
+`ProofGenerator` and `src/proof/verifier.ts`'s `ProofVerifier` (the legacy MCP-style
+`org.kya-os/response-proof`, a full non-detached compact JWS - distinct from D13's
+`org.kya-os/proof.v1`, which binds the CLIENT's request). Each TypeScript module has a much
+larger surface than the two call sites actually use: `ProofVerifier` alone has
+`verifyProofArtifact`, `verifyProofDetached` (deprecated), `fetchPublicKeyFromDID`, and an MCP
+`_meta`-key-tolerance policy (`extractProofFromMeta`/`validateMetaStructure`) this A2A package
+never touches (it reads `RESPONSE_PROOF_META_KEY` directly, never through MCP's `_meta`
+namespace).
+
+**Decision.** `python/packages/a2a/src/cheqd_agent_identity_a2a/proof/response.py` ports only
+what `gate.py` and `client.py` (D15) actually call: `compute_canonical_hashes`,
+`build_proof_jws_payload`, proof generation (full Ed25519 JWS, not detached), and the
+verification pipeline's signer-binding, timestamp-skew, signature, content-binding and
+nonce-replay checks. NOT ported: DID-based key resolution (this package's callers always pin
+the server's key themselves), the deprecated verify paths, and the MCP `_meta`-tolerance
+helpers.
+
+**Why.** Porting the full TypeScript surface would mean carrying dead code for an MCP-specific
+concern (`_meta` key coexistence under SEP-414) this A2A package has no reason to care about -
+`org.kya-os/response-proof` happens to be implemented inside an MCP-focused package upstream,
+but nothing about A2A's use of it is MCP-specific.
+
+**Consequences.** Same as D13: no TypeScript test suite to port from, so `test_response_proof.py`'s
+8 tests were written directly against the fail-closed behaviour in `verifier.ts`'s own source
+comments (content-binding substitution detection, replay, signer binding, skew).
+
+**Revisit-if:** a caller needs `verifyProofArtifact`'s pure historical-evidence path (no replay
+state, no clock comparison) - not currently used anywhere in this A2A binding.
+
+---
+
+## D15. Collapsing `user-builder.ts` + `wrapper.ts` into one Python gate; dict-based, not proto-based
+
+**Context.** Python's `a2a-sdk` (1.3.0) builds its `ServerCallContext` SYNCHRONOUSLY:
+`ServerCallContextBuilder.build(request) -> ServerCallContext` is declared as a plain method,
+and every dispatcher calls it without `await`
+(`a2a/server/routes/jsonrpc_dispatcher.py:319`, `rest_dispatcher.py:108`, read directly, not
+assumed). TypeScript's `userBuilder` seam is async (Express handlers are naturally async), so
+`user-builder.ts` does its proof verification - DID resolution, nonce-cache I/O, both
+genuinely async - right there. Python's equivalent seam cannot. The actual async hook Python
+offers is one level down: `RequestHandler.on_message_send(params, context)` IS awaited by
+every dispatcher, and nothing inside the default implementation touches task state before
+that call - confirmed by reading `default_request_handler.py`'s `on_message_send`, not
+assumed from the interface alone.
+
+**Decision.** `gate.py`'s `AgentIdentityGate.handle_send_message(method, params, call_through)`
+folds what TypeScript splits into `user-builder.ts` (verify) and `wrapper.ts` (enforce + sign
+response) into one wrapping call around the real `on_message_send`, invoked by the integrator
+before calling the real handler through. Separately: `gate.py`/`client.py` operate on plain
+JSON-safe dicts (this package's own `CoveredRequest`/`covered_request()`/`covered_result()`
+shapes), not the real `a2a-sdk`'s protobuf-typed `SendMessageRequest`/`Task` objects.
+Converting between them (e.g. via `google.protobuf.json_format.MessageToDict`, the pattern
+`a2a.utils.signing` already uses for Agent Card canonicalisation) is left to the integrator.
+
+**Why.** Two independent reasons, not one: (1) the sync/async split above makes a literal
+`user-builder.ts` port impossible as written, so the fold is a necessity, not a style choice;
+(2) proto<->JSON round-trip fidelity for the REQUEST side specifically is security-sensitive -
+the request hash a client signs must byte-for-byte match the canonicalisation the server
+recomputes. `MessageToDict`'s exact behaviour (field casing, empty/default-value handling,
+`oneof`s) was not independently verified against a real wire capture in the time available, so
+claiming this module is correct for that conversion would overstate what was actually tested.
+Keeping the conversion out of this module's responsibility means `gate.py`/`client.py`'s OWN
+correctness (verify, enforce, sign, replay, content-binding) is provably right - proven with a
+real client-to-server round trip in `tests/test_gate_and_client.py` - independent of that
+unverified claim.
+
+**Consequences.** This is tested and proven correct for a Python client talking to a Python
+server built on this package (the realistic case: a Python agent calling another Python
+agent). It does NOT prove - and this document does not claim - that a real TypeScript
+`@a2a-js/sdk` client's proof verifies against this Python gate, or vice versa. That would need
+an actual cross-language conformance run (the same kind of exercise
+`conformance/run-a2a-gate-vectors.mjs` does for the TypeScript side) with a real
+`MessageToDict`/`ParseDict` round trip against actual wire captures - not yet done.
+
+**Revisit-if:** a real cross-language A2A conformance run is attempted, or the real `a2a-sdk`
+is wired in end-to-end (at which point the `MessageToDict` conversion's fidelity needs to be
+verified against actual JSON-RPC and REST wire bytes, not assumed).
+
+---
+
 ## What this document doesn't cover
 
 - **The full threat model and negative-vector suite** — `docs/security/threat-model.md`,

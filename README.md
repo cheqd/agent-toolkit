@@ -29,7 +29,7 @@ The two bindings both depend on the core and not on each other, so an AP2 consum
 |---|---|
 | [`cheqd-agent-identity`](./python/packages/core) | Fully ported, except the two modules that adapt to `@kya-os/mcp`'s provider seams (no Python equivalent exists) — see `docs/design-decisions.md` D10. |
 | [`cheqd-agent-identity-ap2`](./python/packages/ap2) | Fully ported, using PyPI's `sd-jwt` for the SD-JWT-VC/KB-JWT crypto layer in place of `@sd-jwt/core` — see D11. |
-| [`cheqd-agent-identity-a2a`](./python/packages/a2a) | **Partial.** The canonical request shape, the trust extension, and a from-spec `org.kya-os/proof.v1` mint/verify engine (read directly from `@kya-os/mcp`'s source, since no Python package implements it — D13) are ported. NOT yet ported: wiring that engine into `@a2a-js/sdk`'s hooks (`user_builder.py`/`wrapper.py`/`client.py`) — see D12/D13. |
+| [`cheqd-agent-identity-a2a`](./python/packages/a2a) | **Functionally complete, not wired to the real `a2a-sdk`.** Both from-spec proof engines (`org.kya-os/proof.v1` and `org.kya-os/response-proof`, read directly from `@kya-os/mcp`'s source — D13/D14), the trust extension, and a working gate + client interceptor (`gate.py`/`client.py`) that verify, enforce and sign real round trips — proven Python-client-to-Python-server, not yet against the real `a2a-sdk`'s protobuf types or a TypeScript peer. See D12/D13/D14/D15. |
 
 ## What this builds on
 

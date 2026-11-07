@@ -1,18 +1,25 @@
 """cheqd_agent_identity_a2a - A2A binding: canonical request shape, the
-`https://cheqd.io/a2a/ext/trust/v1` extension's per-DID checks, and a from-spec
-`org.kya-os/proof.v1` holder-of-key proof engine (mint + verify).
+`https://cheqd.io/a2a/ext/trust/v1` extension's per-DID checks, a from-spec
+`org.kya-os/proof.v1` holder-of-key proof engine (mint + verify), a from-spec
+`org.kya-os/response-proof` engine, and the gate/client wiring that composes them.
 
-DRAFT - early exploration, not reviewed or stable. PARTIAL Python port of
-@cheqd/agent-identity-a2a: the TypeScript package's `userBuilder`/wrapper/client gate wiring
-(`createVerifyingUserBuilder`, the gRPC equivalent, the enforcing wrapper, the client
-interceptor) is NOT ported here. Those exist to wire this proof engine into `@a2a-js/sdk`'s
-specific hooks; the `proof` subpackage below is the engine itself, re-implemented from spec
-(not ported from TypeScript, which depends on `@kya-os/mcp` - no Python equivalent of that
-package exists). See docs/design-decisions.md D12/D13.
+DRAFT - early exploration, not reviewed or stable. Python port of
+@cheqd/agent-identity-a2a, structured differently from the TypeScript original in one respect:
+`gate.py` collapses TypeScript's `user-builder.ts` + `wrapper.ts` into one layer, because
+Python's `a2a-sdk` builds its `ServerCallContext` synchronously, unlike TypeScript's async
+Express `userBuilder` seam. `gate.py`/`client.py` operate on plain JSON-safe dicts, not the
+real `a2a-sdk`'s protobuf-typed objects - converting between them is the integrator's job.
+See docs/design-decisions.md D12-D15.
 
 SPDX-License-Identifier: Apache-2.0
 """
 
+from cheqd_agent_identity_a2a.client import (
+    ProofInterceptor,
+    ProofInterceptorOptions,
+    ProofInterceptorState,
+    ResponseProofCheck,
+)
 from cheqd_agent_identity_a2a.covered_request import (
     LEGACY_PROOF_META_KEY,
     PROOF_META_KEY,
@@ -21,7 +28,27 @@ from cheqd_agent_identity_a2a.covered_request import (
     covered_request,
     covered_result,
 )
+from cheqd_agent_identity_a2a.gate import (
+    AgentIdentityGate,
+    GateEnforcementError,
+    GateUser,
+    ResponseProofOptions,
+    TrustExtensionGate,
+    VerifiedCaller,
+    enforce,
+    verify_caller,
+)
 from cheqd_agent_identity_a2a.proof.build import BuildProofContext, build_card_proof
+from cheqd_agent_identity_a2a.proof.response import (
+    RESPONSE_PROOF_PROFILE_BODY,
+    RESPONSE_PROOF_PROFILE_ENVELOPE,
+    ResponseProofIdentity,
+    ResponseProofSession,
+    ResponseProofVerifyFailed,
+    ResponseProofVerifyOk,
+    generate_response_proof,
+    verify_response_proof,
+)
 from cheqd_agent_identity_a2a.proof.signer import ProofSigner, ed25519_signer_from_jwk
 from cheqd_agent_identity_a2a.proof.types import (
     DEFAULT_SKEW_SEC,
@@ -51,14 +78,34 @@ from cheqd_agent_identity_a2a.trust_extension import (
 )
 
 __all__ = [
+    "ProofInterceptor",
+    "ProofInterceptorOptions",
+    "ProofInterceptorState",
+    "ResponseProofCheck",
     "LEGACY_PROOF_META_KEY",
     "PROOF_META_KEY",
     "RESPONSE_PROOF_META_KEY",
     "CoveredRequest",
     "covered_request",
     "covered_result",
+    "AgentIdentityGate",
+    "GateEnforcementError",
+    "GateUser",
+    "ResponseProofOptions",
+    "TrustExtensionGate",
+    "VerifiedCaller",
+    "enforce",
+    "verify_caller",
     "BuildProofContext",
     "build_card_proof",
+    "RESPONSE_PROOF_PROFILE_BODY",
+    "RESPONSE_PROOF_PROFILE_ENVELOPE",
+    "ResponseProofIdentity",
+    "ResponseProofSession",
+    "ResponseProofVerifyFailed",
+    "ResponseProofVerifyOk",
+    "generate_response_proof",
+    "verify_response_proof",
     "ProofSigner",
     "ed25519_signer_from_jwk",
     "DEFAULT_SKEW_SEC",
