@@ -221,6 +221,40 @@ This is documented in the module's own comment because it is easy to misread as 
 
 ---
 
+## D10. Scoping the Python port against `@kya-os/mcp`
+
+**Context.** `python/packages/core` ports `@cheqd/agent-identity`. Two of its nine TypeScript
+modules — `status/status-list-resolver.ts` and `status/eddsa-jcs-status.ts` — exist only to
+adapt this package's own logic to `@kya-os/mcp`'s provider seams (`StatusListResolver`,
+`BitstringRevocationChecker`, `NonceCacheProvider`). No Python package published anywhere
+implements `@kya-os/mcp`'s delegation/provider framework (checked PyPI directly for `kya-os`
+and `kya-os-mcp`: neither exists); the only Python artefact from that project is an independent
+*conformance verifier* for the proof-layer vectors, not the provider framework itself.
+
+**Decision.** The Python core package ports every module that is cheqd's own self-contained
+logic (`agent_card`, `did_cheqd`, `linkage`, `proof/eddsa_jcs_2022`, `status/ledger_anchored`,
+`dlr/resolve_manifest`) faithfully, including its full test suite. It does NOT port
+`status-list-resolver.ts` or `eddsa-jcs-status.ts`. `replay/file_nonce_cache.py` still exists,
+but subclasses a plain Python ABC (`NonceCacheProvider`) defined locally in this package — the
+same method contract `@kya-os/mcp`'s TypeScript interface declares, re-specified rather than
+imported, since there is nothing to import from.
+
+**Why.** Porting the two skipped modules would mean re-implementing a chunk of someone else's
+MCP delegation framework in Python speculatively, with no consumer for it on the Python side -
+out of scope for a trust-binding port, and a maintenance burden with no corresponding upstream
+to track.
+
+**Consequences.** The Python core package's public surface for credential-status checking is
+`verify_ledger_anchored_status` only (the ledger-anchored, resolver-checksum path) — there is no
+Python equivalent of the decision-6 `eddsa-jcs-2022` proof-based status list path yet. If a
+Python KYA-OS-shaped delegation framework is ever built, these two modules are the template to
+follow when wiring this package's ledger-anchored check into it.
+
+**Revisit-if:** a Python `@kya-os/mcp` equivalent is published, or a consumer needs the
+proof-based status list path specifically.
+
+---
+
 ## What this document doesn't cover
 
 - **The full threat model and negative-vector suite** — `docs/security/threat-model.md`,
