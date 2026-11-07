@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import re
 import secrets
 import time
@@ -314,11 +315,25 @@ async def verify_response_proof(
             return ResponseProofVerifyFailed(reason=mismatch)
 
     if consume_nonce_if_fresh is not None:
-        ok = await consume_nonce_if_fresh(meta.nonce, meta.did, skew_sec)
+        min_ttl_sec = _nonce_retention_seconds(DEFAULT_NONCE_TTL_SEC, meta.ts + skew_sec, now_ms)
+        ok = await consume_nonce_if_fresh(meta.nonce, meta.did, min_ttl_sec)
         if ok is not True:
             return ResponseProofVerifyFailed(reason="Nonce already used (replay attack detected)")
 
     return ResponseProofVerifyOk()
+
+
+DEFAULT_NONCE_TTL_SEC = 300
+
+
+def _nonce_retention_seconds(configured_ttl_seconds: float, valid_until_seconds: float, now_ms: float) -> int:
+    """Floor the nonce cache TTL so a replay can never slip past outside the +-skew window
+    because the cache evicted it first - matching `@kya-os/mcp`'s `nonceRetentionSeconds`
+    (`ProofVerifier.consumeNonce`). Found missing by a real cross-language gap audit against
+    the TS reference (see docs/design-decisions.md D14's response-proof scope note) - the
+    bare `skew_sec` passed as TTL left up to ~`skew_sec` seconds of extra replay exposure.
+    """
+    return max(1, int(configured_ttl_seconds), math.ceil(valid_until_seconds + 1 - now_ms / 1000))
 
 
 def _verify_signature(jws: str, meta: ResponseProofMeta, public_key_jwk: dict[str, Any]) -> bool:

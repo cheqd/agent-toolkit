@@ -537,6 +537,40 @@ silently stays compatible.
 
 ---
 
+## D17. Response-proof nonce-cache TTL was floored too low - third bug, found by an independent gap audit
+
+**Context.** After D16, a line-by-line audit of every Python check against its TypeScript
+source (not another cross-language mint/verify run - a direct code comparison) found a third
+bug D16's conformance run didn't surface, because D16 never let a nonce's cache entry actually
+expire mid-test.
+
+**The bug.** `verify_response_proof` (`response.py`) passed the bare `skew_sec` (default
+120s) straight through as the nonce cache's TTL. The TS reference
+(`ProofVerifier.consumeNonce`, `verifier.js`) instead floors the TTL at `nonceRetentionSeconds`
+- at least 300s, extended to cover the full `ts ± skew` acceptance window plus headroom.
+Because the acceptance window is twice `skew_sec` wide but the Python cache entry was only
+retained for one `skew_sec`, a nonce consumed near the start of its window could be evicted by
+the cache before the timestamp-skew check alone would reject a replay of it - up to roughly
+`skew_sec` seconds of extra replay exposure versus the TS reference. `proof.v1`'s own
+`verify.py` already had the correct `_nonce_retention_seconds` floor for the *other* proof
+engine, which is why this was clearly an accidental omission in `response.py`, not a
+documented scope cut (D14 doesn't mention it).
+
+**Fix.** Ported the same `_nonce_retention_seconds` floor (default 300s) into `response.py`
+and call it before `consume_nonce_if_fresh`. Added
+`test_nonce_cache_ttl_is_floored_to_default_retention_not_bare_skew`, since the existing replay
+test's mock ignored its `ttl` argument entirely and would not have caught this even with the
+bug present.
+
+**Why this matters.** Neither the 185 Python-only tests nor D16's real cross-language
+mint/verify run caught this, because both only ever checked whether a proof passed or failed
+verification - never how long the nonce cache was asked to retain an entry. It took reading
+the TS source's cache-TTL arithmetic line-by-line, not running it against a real peer, to find.
+This is a different blind spot from D16's (schema/signature incompatibility vs. cache-lifetime
+arithmetic) - both are necessary, neither alone is sufficient.
+
+---
+
 ## What this document doesn't cover
 
 - **The full threat model and negative-vector suite** — `docs/security/threat-model.md`,

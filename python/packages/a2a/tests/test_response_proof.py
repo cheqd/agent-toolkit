@@ -157,6 +157,37 @@ async def test_a_replayed_nonce_is_rejected_the_second_time():
     assert "replay" in second.reason.lower()
 
 
+async def test_nonce_cache_ttl_is_floored_to_default_retention_not_bare_skew():
+    # Guards the gap a cross-language audit found: passing the bare skew_sec straight through
+    # as the cache TTL left a replay window the +-skew check alone wouldn't catch once the
+    # cache had already evicted the nonce - see _nonce_retention_seconds in proof/response.py.
+    sk, public_jwk = keypair()
+    identity = ResponseProofIdentity(did=SERVER_DID, kid=SERVER_KID, private_key=sk)
+    session = ResponseProofSession(session_id="a2a-stateless", audience=CLIENT_DID)
+    req = CanonicalRequest(method="SendMessage", params={})
+    resp = CanonicalResponse(data={"status": "completed"})
+
+    proof = await generate_response_proof(req, resp, identity, session)
+    seen_ttl = {}
+
+    async def consume(nonce, did, ttl):
+        seen_ttl["value"] = ttl
+        return True
+
+    skew_sec = 5
+    await verify_response_proof(
+        proof,
+        public_jwk,
+        (req, resp),
+        expected_did=SERVER_DID,
+        expected_audience=CLIENT_DID,
+        consume_nonce_if_fresh=consume,
+        skew_sec=skew_sec,
+    )
+    assert seen_ttl["value"] >= 300
+    assert seen_ttl["value"] > skew_sec
+
+
 async def test_a_response_proof_with_no_response_rejects_a_supplied_response():
     sk, public_jwk = keypair()
     identity = ResponseProofIdentity(did=SERVER_DID, kid=SERVER_KID, private_key=sk)
