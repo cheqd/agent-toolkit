@@ -545,6 +545,7 @@ real `SendMessageRequest` (`created`, `expires`, response-proof's `ts`) arrives 
 `float` (`1700000000.0`), never an `int`, even though the wire JSON had no decimal point.
 Verified, not assumed, that this splits into two independent questions with two different
 answers:
+
 1. Does the REQUEST-HASH itself still match? Yes - `rfc8785.dumps({"created": 1700000000.0})`
    and `rfc8785.dumps({"created": 1700000000})` are byte-identical; RFC 8785's number
    formatting already collapses an integral float to the same canonical form as the
@@ -627,8 +628,9 @@ expire mid-test.
 
 **The bug.** `verify_response_proof` (`response.py`) passed the bare `skew_sec` (default
 120s) straight through as the nonce cache's TTL. The TS reference
-(`ProofVerifier.consumeNonce`, `verifier.js`) instead floors the TTL at `nonceRetentionSeconds`
-- at least 300s, extended to cover the full `ts ± skew` acceptance window plus headroom.
+(`ProofVerifier.consumeNonce`, `verifier.js`) instead floors the TTL at
+`nonceRetentionSeconds` - at least 300s, extended to cover the full `ts ± skew` acceptance
+window plus headroom.
 Because the acceptance window is twice `skew_sec` wide but the Python cache entry was only
 retained for one `skew_sec`, a nonce consumed near the start of its window could be evicted by
 the cache before the timestamp-skew check alone would reject a replay of it - up to roughly
