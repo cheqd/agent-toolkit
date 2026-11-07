@@ -304,7 +304,7 @@ the private methods this subclass depends on.
 
 ---
 
-## D12. The Python A2A port is partial - the proof-verification gate itself isn't ported
+## D12. The Python A2A port was initially partial - the proof-verification gate itself wasn't ported
 
 **Context.** Unlike AP2, almost everything in `packages/a2a` imports directly from
 `@kya-os/mcp/card`, `@kya-os/mcp/proof` or `@kya-os/mcp/providers`: `user-builder.ts` and
@@ -317,33 +317,86 @@ repository README's "What this builds on"). Only `covered-request.ts` (canonical
 shaping) and `trust-extension.ts` (composed from this package's own core building blocks) are
 self-contained.
 
-**Decision.** `python/packages/a2a` ports `covered_request.py` and `trust_extension.py` only.
-It does NOT port `user_builder.py`, `grpc_user_builder.py`, `wrapper.py` or `client.py` - the
-`userBuilder` + enforcing-wrapper gate design itself, and the client-side proof-building
-interceptor.
+**Decision (superseded - see D13).** `python/packages/a2a` initially ported only
+`covered_request.py` and `trust_extension.py`. A from-spec `org.kya-os/proof.v1` engine was
+built afterward (D13) once the scope of that gap was sized and approved, so this no longer
+describes the package's actual state - kept for the record of why the gap existed at all.
 
 **Why.** `@kya-os/mcp`'s `org.kya-os/proof.v1` profile (RFC 8785 JCS canonicalisation, detached
 JWS, RFC 9421 HTTP Message Signatures, RFC 7638 `cnf` thumbprint fusion) is published as a
 cross-language-verified profile - its own conformance suite ships an independent Python
 stdlib-only reference verifier (`conformance/verify.py`, MIT-licensed, confirmed directly
 against `node_modules/@kya-os/mcp/CONFORMANCE.md` and `LICENSE`) precisely so other languages
-don't re-derive this construction from spec prose. But that reference verifier is a
-conformance-vector checker, not a packaged library with the provider/DI surface
-(`CryptoProvider`, `ClockProvider`, `FetchProvider`, `NonceCacheProvider`,
-`buildCardProof`/`verifyCardProof`) this package's gate wires into - building that surface in
-Python is a real, separate piece of engineering, not a port of these four files.
+don't re-derive this construction from spec prose. That reference verifier is a
+conformance-vector checker, not a packaged library - so the engine (D13) was built by reading
+`@kya-os/mcp`'s actual TypeScript source directly, not by consuming a library.
 
-**Consequences.** The Python A2A package currently has no runnable server-side verification
-gate or client-side signing interceptor - `trust_extension.py` is usable only once some other
-component has already produced a verified caller DID. The design is proven out completely in
-TypeScript (gate ordering, fail-closed `userBuilder`, the enforcing wrapper's response proof);
-a Python gate would follow the exact same shape once a Python `org.kya-os/proof.v1`
-implementation exists to build it on.
+**Consequences.** Addressed by D13.
 
-**Revisit-if:** a Python package implementing `@kya-os/mcp`'s proof.v1 profile (even just
-`buildCardProof`/`verifyCardProof`, not the full MCP delegation framework) is built or
-published - at which point `user_builder.py`/`wrapper.py`/`client.py` port directly from their
-TypeScript originals with no design changes, only the proof-layer import swapped.
+**Revisit-if:** n/a - see D13.
+
+---
+
+## D13. A from-spec Python `org.kya-os/proof.v1` engine, read directly from `@kya-os/mcp`'s source
+
+**Context.** D12 left the Python A2A package without a working proof gate. `@kya-os/mcp`
+(MIT-licensed) has no Python package to depend on, but its TypeScript source is directly
+readable (`node_modules/@kya-os/mcp/dist/card/proof/*.js`), and the profile itself
+(`org.kya-os/proof.v1`) is a published, cross-language-verified spec, not a proprietary
+construction - reimplementing it from that source is porting a specification, not
+reverse-engineering a product.
+
+**Decision.** `python/packages/a2a/src/cheqd_agent_identity_a2a/proof/` ports
+`canonical.ts`, `types.ts`, `signer.ts`, `build.ts` and `verify.ts` faithfully - every
+fail-closed check in `verify_card_proof` (kid/did binding, DID-membership RFC 7638
+thumbprint proof, audience, request-hash, replay via the atomic nonce seam, the
+created/expires window, the detached-JWS signature, the small-order Ed25519 key rejection,
+and the `cnf.jkt` sender-constraint fusion to L3/L3-minus) is present, read line-by-line from
+the TypeScript source, not reconstructed from the SPEC prose alone. Two things are
+deliberately NOT ported:
+
+- **`http-sig.ts`** (the RFC 9421 HTTP Message Signature "dual carrier"). This A2A package
+  verifies proofs carried in JSON-RPC/REST message `metadata`, never as real HTTP headers -
+  `user_builder.py`/`wrapper.py` (still not built; see below) would never call it. Minting
+  still works with no `signRaw` seam: the proof ships JWS-only, exactly as the TypeScript
+  signer does when it omits one.
+- **An ES256 signer.** `signer.py` mints Ed25519 (EdDSA) only, matching this programme's
+  consistent Ed25519 posture elsewhere (`sd_jwt_presentation.py`'s algorithm choice,
+  `eddsa_jcs_2022.py`). `verify_card_proof` still VERIFIES both EdDSA and ES256 proofs (a
+  verifier must interoperate with any signer, not just ones this package mints) - proven
+  with a hand-built ES256 proof in `tests/test_proof.py`, not left as an unexercised branch.
+
+Still not ported: `user_builder.py`, `grpc_user_builder.py`, `wrapper.py`, `client.py` - the
+code that wires this engine into `@a2a-js/sdk`'s specific hooks. The engine is the hard part;
+wiring it into the Python `a2a-sdk` package's own hooks (already located and confirmed to
+exist: `a2a.utils.signing.create_signature_verifier` takes a `(kid, jku) -> key` callback
+shaped almost exactly like this package's own `create_retrieve_public_key`) is comparatively
+mechanical and was not yet scoped as its own piece of work.
+
+**Why.** The alternative - leaving the Python A2A package permanently unable to verify
+anything - makes every other package built on top of it (a Python AP2 consumer wanting A2A
+transport, for instance) unusable for its stated purpose. Reading the actual source rather
+than the SPEC prose avoids the two failure modes of a from-spec reimplementation: missing a
+narrow but load-bearing check (the small-order Ed25519 rejection is exactly this kind of
+check - easy to miss from prose, a real forgery vector if skipped), and silently diverging
+on a detail the spec leaves ambiguous but the reference implementation resolved one specific
+way (e.g. the exact RFC 9421 Content-Digest string format the `requestHash` claim must use,
+even though this package never sends that digest over real HTTP).
+
+**Consequences.** This module has no corresponding TypeScript *test* file to port from
+(`verify.ts`/`build.ts` are themselves the "specification" here, there being no
+`@kya-os/mcp` TypeScript test suite shipped in the npm package either) - its 34 tests were
+written directly against the fail-closed behaviour documented in `@kya-os/mcp`'s own source
+comments, each one chosen to prove a specific claim in those comments true of this
+reimplementation, not copied from an existing suite. A future `@kya-os/mcp` release could
+change the profile in a way this package would not pick up automatically (no dependency
+relationship exists to flag it) - revisit against the source on any reported interop failure
+with a real `org.kya-os/proof.v1` peer.
+
+**Revisit-if:** a Python package implementing this profile is ever published (switch to
+depending on it instead of maintaining this reimplementation), or `user_builder.py`/
+`wrapper.py`/`client.py` are scoped and built (the natural next step - this engine is what
+they were blocked on).
 
 ---
 

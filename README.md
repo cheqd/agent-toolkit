@@ -29,7 +29,7 @@ The two bindings both depend on the core and not on each other, so an AP2 consum
 |---|---|
 | [`cheqd-agent-identity`](./python/packages/core) | Fully ported, except the two modules that adapt to `@kya-os/mcp`'s provider seams (no Python equivalent exists) — see `docs/design-decisions.md` D10. |
 | [`cheqd-agent-identity-ap2`](./python/packages/ap2) | Fully ported, using PyPI's `sd-jwt` for the SD-JWT-VC/KB-JWT crypto layer in place of `@sd-jwt/core` — see D11. |
-| [`cheqd-agent-identity-a2a`](./python/packages/a2a) | **Partial.** Only the canonical request shape and the trust extension are ported — the actual holder-of-key proof verification gate is built entirely on `@kya-os/mcp`, which has no Python equivalent — see D12. |
+| [`cheqd-agent-identity-a2a`](./python/packages/a2a) | **Partial.** The canonical request shape, the trust extension, and a from-spec `org.kya-os/proof.v1` mint/verify engine (read directly from `@kya-os/mcp`'s source, since no Python package implements it — D13) are ported. NOT yet ported: wiring that engine into `@a2a-js/sdk`'s hooks (`user_builder.py`/`wrapper.py`/`client.py`) — see D12/D13. |
 
 ## What this builds on
 

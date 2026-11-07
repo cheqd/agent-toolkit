@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "cheqd-agent-identity-a2a"
 version = "0.0.0"
-description = "DRAFT — A2A trust binding: covered-request canonicalisation and the trust extension. Python port - partial, see docs/design-decisions.md D12."
+description = "DRAFT — A2A trust binding: covered-request canonicalisation, the trust extension, and a from-spec org.kya-os/proof.v1 holder-of-key proof engine. Python port - partial, see docs/design-decisions.md D12/D13."
 authors = []
 license = "Apache-2.0"
 packages = [{ include = "cheqd_agent_identity_a2a", from = "src" }]
@@ -9,6 +9,8 @@ packages = [{ include = "cheqd_agent_identity_a2a", from = "src" }]
 [tool.poetry.dependencies]
 python = "^3.12"
 cheqd-agent-identity = { path = "../core", develop = true }
+rfc8785 = "^0.1.4"
+cryptography = ">=44.0.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "0.12.8"
