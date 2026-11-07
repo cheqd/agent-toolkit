@@ -255,6 +255,55 @@ proof-based status list path specifically.
 
 ---
 
+## D11. The Python AP2 port and the `sd-jwt` reference library's real gaps
+
+**Context.** Unlike `packages/a2a`, almost all of `packages/ap2` is cheqd's own self-contained
+logic (constraints, mandate-chain linking, max-flow line-item matching, the mandate
+consumption store, `cnf` fusion, the authorised-secondary-key path) with no `@kya-os/mcp`
+dependency - only `sd-jwt-presentation.ts`'s crypto layer is external (`@sd-jwt/core`). The
+Python port uses PyPI's `sd-jwt` (the IETF SD-JWT spec's own reference implementation), the
+closest Python equivalent. Verified empirically against two real defects in that library
+(version 0.10.4), not assumed:
+
+1. `SDJWTVerifier._verify_sd_jwt`/`_verify_key_binding_jwt` never check `exp`/`iat` at all - a
+   literal `# TODO: Check exp/nbf/iat` left in its own source.
+2. `SDJWTVerifier.__init__` calls `_verify_key_binding_jwt` without forwarding an explicit
+   algorithm, so it silently defaults to `ES256` regardless of what algorithm the token
+   actually used - an Ed25519-signed Key Binding JWT fails verification against the library's
+   own default path (reproduced directly: `jwt.exceptions`-equivalent `InvalidJWSSignature:
+   "alg" mismatch, requested "ES256", found "EdDSA"`).
+
+**Decision.** `python/packages/ap2/src/cheqd_agent_identity_ap2/sd_jwt_presentation.py`
+subclasses `SDJWTVerifier` (`_AlgPinnedVerifier`) to pass each signer's own algorithm, derived
+from its JWK's `kty` (matching this programme's existing EdDSA/ES256 allow-list), and adds its
+own `exp`/`iat`/skew check after the library's verification succeeds - the same shape
+`@sd-jwt/core`'s `skewSeconds`/`currentDate` options already gave the TypeScript package. The
+library also has no public way to add a `transaction_data` claim to a KB-JWT it builds
+(`SDJWTHolder.create_presentation`'s KB-JWT payload is a fixed `{nonce, aud, iat, sd_hash}`
+dict) - this only affects test-fixture construction (a verifier reads whatever claims are
+present in an already-signed KB-JWT; it was never calling the holder's issuance path), so the
+Python test suite builds its KB-JWT fixtures directly with `jwcrypto`, reproducing the
+library's own `sd_hash` computation rather than reimplementing SD-JWT disclosure logic.
+
+**Why.** Both defects are narrow and fixable by subclassing/wrapping the existing, tested
+verification logic - not reasons to hand-roll SD-JWT-VC parsing or KB-JWT verification
+ourselves. Silently trusting the library's untested-for-this-programme defaults (ES256-only KB-
+JWT, no expiry enforcement) would have been a real security regression versus the TypeScript
+package, caught here only because the port was run end-to-end against real Ed25519 keys rather
+than assumed to work from the library's docs.
+
+**Consequences.** `_AlgPinnedVerifier` is coupled to `sd-jwt` 0.10.4's private method
+signatures (`_verify_sd_jwt`, `_verify_key_binding_jwt`, `_holder_public_key_payload`) - a
+future upstream release could rename or remove them silently, since they are not part of the
+library's public API. Covered only by this package's own test suite, not upstream's; revisit
+on every `sd-jwt` version bump.
+
+**Revisit-if:** `sd-jwt` ships a release that fixes either defect upstream (at which point the
+subclass override becomes unnecessary and should be removed, not kept "for safety"), or renames
+the private methods this subclass depends on.
+
+---
+
 ## What this document doesn't cover
 
 - **The full threat model and negative-vector suite** — `docs/security/threat-model.md`,
