@@ -1,0 +1,41 @@
+name: "Python"
+on:
+  workflow_call:
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  python-lint-and-test:
+    name: "Lint & test (${{ matrix.package }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [core, a2a, ap2]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: pipx install poetry==2.5.1
+
+      - name: Install dependencies
+        working-directory: python/packages/${{ matrix.package }}
+        run: poetry install --no-interaction
+
+      - name: Lint (ruff check)
+        working-directory: python/packages/${{ matrix.package }}
+        run: poetry run ruff check .
+
+      - name: Format check (ruff format)
+        working-directory: python/packages/${{ matrix.package }}
+        run: poetry run ruff format --check .
+
+      - name: Unit tests
+        working-directory: python/packages/${{ matrix.package }}
+        run: poetry run pytest

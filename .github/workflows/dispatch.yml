@@ -14,3 +14,8 @@ jobs:
     name: "Build & Test"
     uses: ./.github/workflows/build.yml
     secrets: inherit
+
+  call-python:
+    name: "Python"
+    uses: ./.github/workflows/python.yml
+    secrets: inherit
