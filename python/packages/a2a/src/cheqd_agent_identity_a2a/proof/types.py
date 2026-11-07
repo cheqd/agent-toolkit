@@ -90,8 +90,25 @@ class ParsedCardProofFailed:
 ParsedCardProofResult = Union[ParsedCardProofOk, ParsedCardProofFailed]
 
 
-def _is_non_negative_int(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+def _coerce_non_negative_int(value: Any) -> Optional[int]:
+    """Accept a plain `int`, or a whole-number `float`, as a non-negative integer claim -
+    `None` if `value` is neither. The float case matters in practice: a proof that arrives
+    nested inside a real `a2a-sdk` protobuf `google.protobuf.Struct` (the metadata field's
+    wire type) has every number round-tripped through `Struct.Value.number_value`, a
+    `double` - `MessageToDict` hands this module `1700000000.0`, never `1700000000`, even
+    though the original JSON on the wire had no decimal point. TypeScript's schema
+    (`z.number().int()`) already accepts this: JavaScript has no integer type at all, so a
+    JS `number` passing `.int()` is exactly this same "double with no fractional part"
+    shape - accepting it here isn't a looser check than the original, it is the SAME check,
+    expressed for a language that distinguishes `int`/`float` where JS does not.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float) and value.is_integer():
+        return int(value) if value >= 0 else None
+    return None
 
 
 def parse_card_proof_meta(value: Any) -> ParsedCardProofResult:
@@ -135,9 +152,11 @@ def parse_card_proof_meta(value: Any) -> ParsedCardProofResult:
     nonce = value.get("nonce")
     if not isinstance(nonce, str) or len(nonce) == 0 or not _BASE64URL_RE.match(nonce):
         return ParsedCardProofFailed()
-    if not _is_non_negative_int(value.get("created")):
+    created = _coerce_non_negative_int(value.get("created"))
+    if created is None:
         return ParsedCardProofFailed()
-    if not _is_non_negative_int(value.get("expires")):
+    expires = _coerce_non_negative_int(value.get("expires"))
+    if expires is None:
         return ParsedCardProofFailed()
     request_hash = value.get("requestHash")
     if not isinstance(request_hash, str) or len(request_hash) == 0:
@@ -167,8 +186,8 @@ def parse_card_proof_meta(value: Any) -> ParsedCardProofResult:
             kid=kid,
             audience=audience,
             nonce=nonce,
-            created=value["created"],
-            expires=value["expires"],
+            created=created,
+            expires=expires,
             request_hash=request_hash,
             jws=jws,
             http_sig=http_sig,

@@ -222,8 +222,21 @@ def _wire_to_meta(wire: dict[str, Any]) -> Optional[ResponseProofMeta]:
     for field_name in ("did", "kid", "nonce", "audience", "sessionId"):
         if not isinstance(wire.get(field_name), str) or len(wire[field_name]) == 0:
             return None
-    ts = wire.get("ts")
-    if not isinstance(ts, int) or isinstance(ts, bool) or ts <= 0:
+    ts_raw = wire.get("ts")
+    # Accept a whole-number float as well as a plain int: a proof nested inside a real
+    # `a2a-sdk` protobuf `google.protobuf.Struct` (the metadata field's wire type) has every
+    # number round-tripped through `Struct.Value.number_value`, a `double` - `MessageToDict`
+    # hands this `1700000000.0`, never `1700000000`, even though the wire JSON had no decimal
+    # point. See `types.py`'s `_coerce_non_negative_int` for the identical reasoning.
+    if isinstance(ts_raw, bool):
+        return None
+    if isinstance(ts_raw, int):
+        ts = ts_raw
+    elif isinstance(ts_raw, float) and ts_raw.is_integer():
+        ts = int(ts_raw)
+    else:
+        return None
+    if ts <= 0:
         return None
     request_hash = wire.get("requestHash")
     if not isinstance(request_hash, str) or not re.match(r"^sha256:[a-f0-9]{64}$", request_hash):

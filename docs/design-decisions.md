@@ -484,18 +484,54 @@ correctness (verify, enforce, sign, replay, content-binding) is provably right -
 real client-to-server round trip in `tests/test_gate_and_client.py` - independent of that
 unverified claim.
 
-**Consequences.** This is tested and proven correct for a Python client talking to a Python
-server built on this package (the realistic case: a Python agent calling another Python
-agent). It does NOT prove - and this document does not claim - that a real TypeScript
-`@a2a-js/sdk` client's proof verifies against this Python gate, or vice versa, AT THE
-`gate.py`/`client.py` WIRING LAYER specifically (the `MessageToDict`/`ParseDict` round trip
-against real JSON-RPC/REST wire bytes). The two PROOF ENGINES underneath that layer (D13's
-`org.kya-os/proof.v1`, D14's `org.kya-os/response-proof`) ARE now verified cross-language -
-see D16.
+**Consequences (superseded in part - see below).** This is tested and proven correct for a
+Python client talking to a Python server built on this package. The two PROOF ENGINES
+underneath this layer (D13's `org.kya-os/proof.v1`, D14's `org.kya-os/response-proof`) are
+verified cross-language against the real `@kya-os/mcp` - see D16.
 
-**Revisit-if:** a real cross-language A2A conformance run is attempted at the wiring layer, or
-the real `a2a-sdk` is wired in end-to-end (at which point the `MessageToDict` conversion's
-fidelity needs to be verified against actual JSON-RPC and REST wire bytes, not assumed).
+**Update: the `MessageToDict`/`ParseDict` wiring layer is now built and tested against the
+real `a2a-sdk`, not left to the integrator unverified.** `proto_bridge.py`
+(`send_message_request_to_params`, `result_dict_to_proto`, `wrap_on_message_send`) is the
+actual bridge, built against the REAL `a2a.types.SendMessageRequest`/`Task`/`Message`
+protobuf classes installed in this repo's environment - not a hand-rolled stand-in - and
+kept as its own module, deliberately separate from `gate.py`/`client.py`, for the same reason
+D15 originally gave: so this module's own correctness (and its own test failures) never get
+confused with the gate's.
+
+`tests/test_proto_bridge.py` proves, with a REAL `SendMessageRequest`/`Task` proto round
+trip (not simulated by hand): a client-minted proof survives `ParseDict`-then-`MessageToDict`
+and still verifies on the server side; a request tampered with after minting (but before the
+proto round trip) is still correctly rejected (`request_hash_mismatch`) after that round
+trip; and the response proof the client verifies survives the same round trip on the way
+back. The security-sensitive question D15 raised - "does the request-hash a client signs
+byte-for-byte match what the server recomputes after a real proto round trip" - is now
+answered with real evidence: **yes**, but not for free. One real finding surfaced along the
+way:
+
+`SendMessageRequest.message.metadata` is a `google.protobuf.Struct`, whose `Value.
+number_value` is always a `double` - every number inside a proof that round-trips through a
+real `SendMessageRequest` (`created`, `expires`, response-proof's `ts`) arrives as a Python
+`float` (`1700000000.0`), never an `int`, even though the wire JSON had no decimal point.
+Verified, not assumed, that this splits into two independent questions with two different
+answers:
+1. Does the REQUEST-HASH itself still match? Yes - `rfc8785.dumps({"created": 1700000000.0})`
+   and `rfc8785.dumps({"created": 1700000000})` are byte-identical; RFC 8785's number
+   formatting already collapses an integral float to the same canonical form as the
+   equivalent int, matching JavaScript's own number semantics (JS has no `int` type at all).
+2. Did the STRICT SCHEMA PARSER accept it? No, until fixed - `CardProofMeta`'s and
+   `ResponseProofMeta`'s `isinstance(value, int)` checks rejected a well-formed proof
+   outright once its `created`/`expires`/`ts` arrived as a float. Fixed in `proof/types.py`'s
+   `_coerce_non_negative_int` and `proof/response.py`'s `_wire_to_meta` to accept a
+   whole-number float as equivalent to an int - which is not a loosening relative to the
+   TypeScript original, since `z.number().int()` already accepted exactly this shape (every
+   JS number is a double; `.int()` only rejects a fractional part, never the underlying
+   representation).
+
+**Revisit-if:** a real cross-language A2A conformance run (TypeScript client -> Python
+server, or vice versa) is attempted at the wiring layer - this remains unverified; only the
+Python-proto-to-Python-gate round trip above is. Or `a2a-sdk` changes `SendMessageRequest`'s
+`metadata` field type away from `google.protobuf.Struct` (unlikely, but would invalidate the
+float-coercion fix's premise).
 
 ---
 

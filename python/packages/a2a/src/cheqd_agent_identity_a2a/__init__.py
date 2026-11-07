@@ -77,6 +77,11 @@ from cheqd_agent_identity_a2a.proof.verify import (
     VerifyProofDeps,
     verify_card_proof,
 )
+from cheqd_agent_identity_a2a.proto_bridge import (
+    result_dict_to_proto,
+    send_message_request_to_params,
+    wrap_on_message_send,
+)
 from cheqd_agent_identity_a2a.trust_extension import (
     TrustExtensionActivation,
     TrustExtensionCache,
@@ -137,6 +142,9 @@ __all__ = [
     "ProofVerifyResult",
     "VerifyProofDeps",
     "verify_card_proof",
+    "result_dict_to_proto",
+    "send_message_request_to_params",
+    "wrap_on_message_send",
     "TrustExtensionActivation",
     "TrustExtensionCache",
     "TrustExtensionDeps",
