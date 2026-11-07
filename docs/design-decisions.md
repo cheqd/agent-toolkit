@@ -359,26 +359,33 @@ fail-closed check in `verify_card_proof` (kid/did binding, DID-membership RFC 76
 thumbprint proof, audience, request-hash, replay via the atomic nonce seam, the
 created/expires window, the detached-JWS signature, the small-order Ed25519 key rejection,
 and the `cnf.jkt` sender-constraint fusion to L3/L3-minus) is present, read line-by-line from
-the TypeScript source, not reconstructed from the SPEC prose alone. Two things are
-deliberately NOT ported:
+the TypeScript source, not reconstructed from the SPEC prose alone.
 
-- **`http-sig.ts`** (the RFC 9421 HTTP Message Signature "dual carrier"). This A2A package
-  verifies proofs carried in JSON-RPC/REST message `metadata`, never as real HTTP headers -
-  `user_builder.py`/`wrapper.py` (still not built; see below) would never call it. Minting
-  still works with no `signRaw` seam: the proof ships JWS-only, exactly as the TypeScript
-  signer does when it omits one.
-- **An ES256 signer.** `signer.py` mints Ed25519 (EdDSA) only, matching this programme's
-  consistent Ed25519 posture elsewhere (`sd_jwt_presentation.py`'s algorithm choice,
-  `eddsa_jcs_2022.py`). `verify_card_proof` still VERIFIES both EdDSA and ES256 proofs (a
-  verifier must interoperate with any signer, not just ones this package mints) - proven
-  with a hand-built ES256 proof in `tests/test_proof.py`, not left as an unexercised branch.
+Two things were INITIALLY deliberately not ported, then built later once a concrete need for
+them was identified (both now in `signer.py`/`http_sig.py`, superseding the two bullets this
+paragraph used to list as scope cuts):
 
-Still not ported: `user_builder.py`, `grpc_user_builder.py`, `wrapper.py`, `client.py` - the
-code that wires this engine into `@a2a-js/sdk`'s specific hooks. The engine is the hard part;
-wiring it into the Python `a2a-sdk` package's own hooks (already located and confirmed to
-exist: `a2a.utils.signing.create_signature_verifier` takes a `(kid, jku) -> key` callback
-shaped almost exactly like this package's own `create_retrieve_public_key`) is comparatively
-mechanical and was not yet scoped as its own piece of work.
+- **`http-sig.ts`** (the RFC 9421 HTTP Message Signature "dual carrier") is now ported as
+  `http_sig.py` (`http_signature_base`/`to_http_message_signature`/`verify_http_signature`).
+  `build_card_proof` attaches `httpSig` whenever the signer exposes a `sign_raw` seam,
+  mirroring the TypeScript original's dual-carrier logic exactly. This package's own
+  `gate.py`/`client.py` still never call `verify_http_signature` - the A2A transports in use
+  here are JSON-RPC/REST/gRPC via the `a2a-sdk`, not real HTTP headers a generic RFC 9421
+  verifier reads - so this module exists for integrators who DO put proofs on real HTTP
+  headers, not for this package's own gate.
+- **An ES256 signer** now exists (`es256_signer_from_jwk`, `signer.py`), alongside the
+  original Ed25519-only `ed25519_signer_from_jwk`. Both expose the `sign_raw` seam above.
+  Confirmed interoperable with the real `@kya-os/mcp` reference implementation in both
+  directions (Node-minted ES256 proof + `httpSig`, verified by Python; Python-minted ES256
+  proof + `httpSig`, verified by Node's real `verifyCardProof`/`verifyHttpSignature`) - zero
+  bugs found this time, unlike D16's first cross-language run.
+
+At the time this paragraph was first written, the code wiring this engine into the SDK's own
+hooks (`user_builder.ts`/`wrapper.ts`'s equivalents) did not exist yet. It does now - see
+D15's `gate.py`/`client.py`, which fold what TypeScript splits into one Python module for a
+structural reason (the SDK's sync/async split), not a straight `user_builder.py`/`wrapper.py`
+port. `grpc_user_builder.ts`'s gRPC-transport equivalent remains unported - this package has
+no gRPC transport wiring at all yet.
 
 **Why.** The alternative - leaving the Python A2A package permanently unable to verify
 anything - makes every other package built on top of it (a Python AP2 consumer wanting A2A

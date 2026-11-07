@@ -39,6 +39,13 @@ from cheqd_agent_identity_a2a.gate import (
     verify_caller,
 )
 from cheqd_agent_identity_a2a.proof.build import BuildProofContext, build_card_proof
+from cheqd_agent_identity_a2a.proof.http_sig import (
+    HTTP_SIG_LABEL,
+    http_signature_base,
+    http_signature_base_bytes,
+    to_http_message_signature,
+    verify_http_signature,
+)
 from cheqd_agent_identity_a2a.proof.response import (
     RESPONSE_PROOF_PROFILE_BODY,
     RESPONSE_PROOF_PROFILE_ENVELOPE,
@@ -49,7 +56,11 @@ from cheqd_agent_identity_a2a.proof.response import (
     generate_response_proof,
     verify_response_proof,
 )
-from cheqd_agent_identity_a2a.proof.signer import ProofSigner, ed25519_signer_from_jwk
+from cheqd_agent_identity_a2a.proof.signer import (
+    ProofSigner,
+    ed25519_signer_from_jwk,
+    es256_signer_from_jwk,
+)
 from cheqd_agent_identity_a2a.proof.types import (
     DEFAULT_SKEW_SEC,
     DEFAULT_TTL_SEC,
@@ -108,6 +119,12 @@ __all__ = [
     "verify_response_proof",
     "ProofSigner",
     "ed25519_signer_from_jwk",
+    "es256_signer_from_jwk",
+    "HTTP_SIG_LABEL",
+    "http_signature_base",
+    "http_signature_base_bytes",
+    "to_http_message_signature",
+    "verify_http_signature",
     "DEFAULT_SKEW_SEC",
     "DEFAULT_TTL_SEC",
     "KYA_OS_CARD_PROOF_META_KEY",

@@ -2,18 +2,22 @@
 
 Ported from `@kya-os/mcp/card`'s `card/proof/build.ts`. Mint a stateless, sender-constrained
 `org.kya-os/proof.v1` for one request and return it under the card proof's own `_meta` key
-(`KYA_OS_CARD_PROOF_META_KEY`). The RFC 9421 HTTP Message Signature sibling (`httpSig`) is not
-ported - this package's gate never uses it (JSON-RPC/REST metadata, not real HTTP headers);
-see docs/design-decisions.md D13.
+(`KYA_OS_CARD_PROOF_META_KEY`). Dual carrier: when the signer exposes a `sign_raw` seam, ALSO
+signs the RFC 9421 base (`http_sig.py`) so the HTTP Message Signature sibling is genuinely
+cross-verifiable against the DID key - absent it, the proof ships JWS-only and the sibling
+degrades away (never a failure), exactly like the TypeScript original.
 
 SPDX-License-Identifier: Apache-2.0
 """
 
 from __future__ import annotations
 
+import base64
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
+
+from cheqd_agent_identity_a2a.proof.http_sig import http_signature_base_bytes
 
 from cheqd_agent_identity_a2a.proof.canonical import (
     CoveredRequest,
@@ -93,7 +97,29 @@ async def build_card_proof(
         jws=jws,
         cnf=unsigned.cnf,
     )
-    return {KYA_OS_CARD_PROOF_META_KEY: _to_wire(signed)}
+    sign_raw = getattr(signer, "sign_raw", None)
+    if sign_raw is None:
+        return {KYA_OS_CARD_PROOF_META_KEY: _to_wire(signed)}
+    http_sig_bytes = await sign_raw(http_signature_base_bytes(signed))
+    with_http_sig = CardProofMeta(
+        prf=signed.prf,
+        alg=signed.alg,
+        did=signed.did,
+        kid=signed.kid,
+        audience=signed.audience,
+        nonce=signed.nonce,
+        created=signed.created,
+        expires=signed.expires,
+        request_hash=signed.request_hash,
+        jws=signed.jws,
+        cnf=signed.cnf,
+        http_sig=_b64url(http_sig_bytes),
+    )
+    return {KYA_OS_CARD_PROOF_META_KEY: _to_wire(with_http_sig)}
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
 def _to_wire(meta: CardProofMeta) -> dict[str, Any]:
@@ -111,4 +137,6 @@ def _to_wire(meta: CardProofMeta) -> dict[str, Any]:
     }
     if meta.cnf is not None:
         wire["cnf"] = {"jkt": meta.cnf.jkt}
+    if meta.http_sig is not None:
+        wire["httpSig"] = meta.http_sig
     return wire

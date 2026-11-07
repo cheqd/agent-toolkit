@@ -65,11 +65,15 @@ class CardProofMeta:
     cnf: Optional[CardProofCnf] = None
     http_sig: Optional[str] = None
     """The RFC 9421 HTTP Message Signature sibling's raw signature - present on any proof
-    minted by a signer with a `signRaw` seam (e.g. `@kya-os/mcp`'s `ed25519SignerFromJwk`),
-    whether or not this verifier ever checks it (see docs/design-decisions.md D13: http-sig.ts
-    is not ported, since this package's gate never carries proofs over real HTTP headers). A
-    strict verifier MUST still accept its presence - rejecting a well-formed proof merely
-    because it carries this optional field would break interop with any real signer."""
+    minted by a signer with a `sign_raw` seam (`signer.py`'s `ed25519_signer_from_jwk`/
+    `es256_signer_from_jwk`, or `@kya-os/mcp`'s own `ed25519SignerFromJwk`). `http_sig.py`
+    ports the sibling itself (`http_signature_base`/`to_http_message_signature`/
+    `verify_http_signature`), but this package's own `verify_card_proof` never checks it -
+    this gate's transports are JSON-RPC/REST/gRPC via the `a2a-sdk`, not real HTTP headers, so
+    there is nothing here for the sibling to attach to (see docs/design-decisions.md D13). A
+    strict verifier MUST still accept this field's presence regardless - rejecting a
+    well-formed proof merely because it carries this optional field would break interop with
+    any real signer."""
 
 
 @dataclass(frozen=True)

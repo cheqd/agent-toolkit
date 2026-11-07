@@ -278,11 +278,12 @@ async def test_different_requests_produce_proofs_that_do_not_cross_verify():
     assert "request_hash_mismatch" in result.reasons
 
 
-async def test_an_es256_proof_verifies_no_es256_signer_is_shipped_but_the_verifier_interops():
-    # This package ships no ES256 signer (see signer.py's module docstring) - the verifier
-    # must still accept an ES256 proof from any other org.kya-os/proof.v1 implementation, so
-    # this builds one by hand with raw `cryptography` primitives (JWS ES256 signatures are
-    # the raw r||s concatenation, RFC 7518 §3.4 - not ASN.1 DER).
+async def test_an_es256_proof_verifies_built_by_hand_not_via_the_packaged_signer():
+    # The verifier must accept an ES256 proof from any org.kya-os/proof.v1 implementation,
+    # including ones this package didn't mint - so this builds one by hand with raw
+    # `cryptography` primitives (JWS ES256 signatures are the raw r||s concatenation, RFC
+    # 7518 §3.4 - not ASN.1 DER), independent of `es256_signer_from_jwk`'s own round trip
+    # (covered separately below).
     req = req_for()
     req_hash = compute_request_hash(req)
     private_key = ec.generate_private_key(ec.SECP256R1())
@@ -328,3 +329,97 @@ async def test_an_es256_proof_verifies_no_es256_signer_is_shipped_but_the_verifi
     result = await verify_card_proof(proof, req, deps)
     assert result.ok is True
     assert result.did == DID
+
+
+def es256_private_jwk() -> tuple[dict, dict]:
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    numbers = private_key.public_key().public_numbers()
+    x = _b64url(numbers.x.to_bytes(32, "big"))
+    y = _b64url(numbers.y.to_bytes(32, "big"))
+    d = _b64url(private_key.private_numbers().private_value.to_bytes(32, "big"))
+    private_jwk = {"kty": "EC", "crv": "P-256", "x": x, "y": y, "d": d}
+    public_jwk = {"kty": "EC", "crv": "P-256", "x": x, "y": y}
+    return private_jwk, public_jwk
+
+
+async def test_es256_signer_from_jwk_mints_a_proof_that_verifies():
+    from cheqd_agent_identity_a2a.proof.signer import es256_signer_from_jwk
+
+    private_jwk, public_jwk = es256_private_jwk()
+    signer = es256_signer_from_jwk(did=DID, kid=KID, private_jwk=private_jwk)
+    req = req_for()
+
+    proof_dict = await build_card_proof(req, signer, BuildProofContext(audience=AUDIENCE, nonce="n-es256"))
+    proof = proof_dict[KYA_OS_CARD_PROOF_META_KEY]
+    assert proof["alg"] == "ES256"
+
+    result = await verify_card_proof(proof, req, basic_deps(public_jwk))
+    assert result.ok is True
+    assert result.did == DID
+
+
+async def test_a_signer_with_sign_raw_attaches_a_verifiable_http_sig():
+    from cheqd_agent_identity_a2a.proof.http_sig import verify_http_signature
+
+    private_jwk, public_jwk = ed25519_private_jwk_dict()
+    signer = ed25519_signer_from_jwk(did=DID, kid=KID, private_jwk=private_jwk)
+    req = req_for()
+
+    proof_dict = await build_card_proof(req, signer, BuildProofContext(audience=AUDIENCE, nonce="n-httpsig"))
+    proof = proof_dict[KYA_OS_CARD_PROOF_META_KEY]
+    assert isinstance(proof.get("httpSig"), str) and len(proof["httpSig"]) > 0
+
+    result = await verify_card_proof(proof, req, basic_deps(public_jwk))
+    assert result.ok is True
+
+    from cheqd_agent_identity_a2a.proof.types import CardProofCnf, CardProofMeta
+
+    meta = CardProofMeta(
+        prf=proof["prf"],
+        alg=proof["alg"],
+        did=proof["did"],
+        kid=proof["kid"],
+        audience=proof["audience"],
+        nonce=proof["nonce"],
+        created=proof["created"],
+        expires=proof["expires"],
+        request_hash=proof["requestHash"],
+        jws=proof["jws"],
+        http_sig=proof["httpSig"],
+        cnf=CardProofCnf(jkt=proof["cnf"]["jkt"]) if "cnf" in proof else None,
+    )
+    assert verify_http_signature(meta, public_jwk) is True
+
+
+async def test_http_sig_is_rejected_against_a_tampered_covered_field():
+    from cheqd_agent_identity_a2a.proof.http_sig import verify_http_signature
+    from cheqd_agent_identity_a2a.proof.types import CardProofCnf, CardProofMeta
+
+    private_jwk, public_jwk = ed25519_private_jwk_dict()
+    signer = ed25519_signer_from_jwk(did=DID, kid=KID, private_jwk=private_jwk)
+    req = req_for()
+
+    proof_dict = await build_card_proof(req, signer, BuildProofContext(audience=AUDIENCE, nonce="n-tamper"))
+    proof = proof_dict[KYA_OS_CARD_PROOF_META_KEY]
+
+    meta = CardProofMeta(
+        prf=proof["prf"],
+        alg=proof["alg"],
+        did=proof["did"],
+        kid=proof["kid"],
+        audience="did:web:attacker.example",
+        nonce=proof["nonce"],
+        created=proof["created"],
+        expires=proof["expires"],
+        request_hash=proof["requestHash"],
+        jws=proof["jws"],
+        http_sig=proof["httpSig"],
+        cnf=CardProofCnf(jkt=proof["cnf"]["jkt"]) if "cnf" in proof else None,
+    )
+    assert verify_http_signature(meta, public_jwk) is False
+
+
+def ed25519_private_jwk_dict() -> tuple[dict, dict]:
+    private_jwk, public_bytes = ed25519_private_jwk()
+    public_jwk = {"kty": "OKP", "crv": "Ed25519", "x": _b64url(public_bytes)}
+    return private_jwk, public_jwk

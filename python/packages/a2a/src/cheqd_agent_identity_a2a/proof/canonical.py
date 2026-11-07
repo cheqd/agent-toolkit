@@ -20,13 +20,77 @@ import re
 from typing import Any, Optional
 
 import rfc8785
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature, encode_dss_signature
 
 from cheqd_agent_identity_a2a.covered_request import CoveredRequest
+from cheqd_agent_identity_a2a.proof.small_order import is_small_order_ed25519_key
 from cheqd_agent_identity_a2a.proof.types import CardProofMeta
 
 
 def sha256(data: bytes) -> bytes:
     return hashlib.sha256(data).digest()
+
+
+def _b64url_decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def ed25519_sign_raw(private_key: Ed25519PrivateKey, data: bytes) -> bytes:
+    """A RAW EdDSA signature (NOT JWS-framed) over `data` - what a stock RFC 9421 verifier
+    expects over the signature base, distinct from the detached JWS (whose signature also
+    covers the protected header).
+    """
+    return private_key.sign(data)
+
+
+def ed25519_verify_raw(public_jwk: dict[str, Any], signature: bytes, data: bytes) -> bool:
+    """Verify a RAW EdDSA signature over `data`. Fail-closed on error or a small-order key
+    (where one signature would fit every message).
+    """
+    try:
+        x_bytes = _b64url_decode(public_jwk["x"])
+        if is_small_order_ed25519_key(x_bytes):
+            return False
+        public_key = Ed25519PublicKey.from_public_bytes(x_bytes)
+        public_key.verify(signature, data)
+        return True
+    except (InvalidSignature, KeyError, ValueError):
+        return False
+
+
+def es256_sign_raw(private_key: ec.EllipticCurvePrivateKey, data: bytes) -> bytes:
+    """A RAW ES256 signature (ECDSA P-256 over SHA-256, `r||s` - NOT DER, NOT JWS-framed) over
+    `data` - the RFC 9421 `ecdsa-p256-sha256` form a stock 9421 verifier reconstructs.
+    """
+    der_signature = private_key.sign(data, ec.ECDSA(hashes.SHA256()))
+    r, s = decode_dss_signature(der_signature)
+    return r.to_bytes(32, "big") + s.to_bytes(32, "big")
+
+
+def es256_verify_raw(public_jwk: dict[str, Any], signature: bytes, data: bytes) -> bool:
+    """Verify a RAW ES256 signature over `data` against a P-256 public JWK. Fail-closed on
+    error.
+    """
+    try:
+        if len(signature) != 64:
+            return False
+        r = int.from_bytes(signature[:32], "big")
+        s = int.from_bytes(signature[32:], "big")
+        der_signature = encode_dss_signature(r, s)
+        x_bytes = _b64url_decode(public_jwk["x"])
+        y_bytes = _b64url_decode(public_jwk["y"])
+        public_numbers = ec.EllipticCurvePublicNumbers(
+            int.from_bytes(x_bytes, "big"), int.from_bytes(y_bytes, "big"), ec.SECP256R1()
+        )
+        public_key = public_numbers.public_key()
+        public_key.verify(der_signature, data, ec.ECDSA(hashes.SHA256()))
+        return True
+    except (InvalidSignature, KeyError, ValueError):
+        return False
 
 
 def _strip_params_meta(params: Any) -> Any:
