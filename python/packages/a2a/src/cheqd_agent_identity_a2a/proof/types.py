@@ -63,6 +63,13 @@ class CardProofMeta:
     request_hash: str
     jws: str
     cnf: Optional[CardProofCnf] = None
+    http_sig: Optional[str] = None
+    """The RFC 9421 HTTP Message Signature sibling's raw signature - present on any proof
+    minted by a signer with a `signRaw` seam (e.g. `@kya-os/mcp`'s `ed25519SignerFromJwk`),
+    whether or not this verifier ever checks it (see docs/design-decisions.md D13: http-sig.ts
+    is not ported, since this package's gate never carries proofs over real HTTP headers). A
+    strict verifier MUST still accept its presence - rejecting a well-formed proof merely
+    because it carries this optional field would break interop with any real signer."""
 
 
 @dataclass(frozen=True)
@@ -103,6 +110,7 @@ def parse_card_proof_meta(value: Any) -> ParsedCardProofResult:
         "requestHash",
         "cnf",
         "jws",
+        "httpSig",
     }
     if not set(value.keys()) <= known_keys:
         return ParsedCardProofFailed()
@@ -133,6 +141,9 @@ def parse_card_proof_meta(value: Any) -> ParsedCardProofResult:
     jws = value.get("jws")
     if not isinstance(jws, str) or len(jws) == 0:
         return ParsedCardProofFailed()
+    http_sig = value.get("httpSig")
+    if http_sig is not None and (not isinstance(http_sig, str) or len(http_sig) == 0):
+        return ParsedCardProofFailed()
 
     cnf: Optional[CardProofCnf] = None
     if "cnf" in value:
@@ -156,6 +167,7 @@ def parse_card_proof_meta(value: Any) -> ParsedCardProofResult:
             expires=value["expires"],
             request_hash=request_hash,
             jws=jws,
+            http_sig=http_sig,
             cnf=cnf,
         )
     )

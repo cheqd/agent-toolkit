@@ -42,6 +42,9 @@ class World:
     def __init__(self) -> None:
         client_private_jwk, _client_sk, self.client_public_jwk = _ed25519_jwks()
         _server_private_jwk, server_sk, self.server_public_jwk = _ed25519_jwks()
+        # The response-proof verifier requires the supplied public JWK to self-declare the
+        # kid it was resolved for (see docs/design-decisions.md D14's cross-language finding).
+        self.server_public_jwk = {**self.server_public_jwk, "kid": SERVER_KID}
 
         self.client_signer = ed25519_signer_from_jwk(
             did=CLIENT_DID, kid=CLIENT_KID, private_jwk=client_private_jwk

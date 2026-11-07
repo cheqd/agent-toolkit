@@ -327,6 +327,13 @@ def _verify_signature(jws: str, meta: ResponseProofMeta, public_key_jwk: dict[st
     x = public_key_jwk.get("x")
     if not isinstance(x, str) or len(x) == 0:
         return False
+    # The supplied JWK must itself declare the kid it was resolved for, matching the proof's
+    # own kid - an extra integrity check against a misconfigured/stale key resolver/cache,
+    # matching `CryptoService.verifyJWS`'s `expectedKid` check in the TypeScript original
+    # (confirmed via a real cross-language conformance run, not assumed - see
+    # docs/design-decisions.md D14).
+    if public_key_jwk.get("kid") != meta.kid:
+        return False
     parts = jws.split(".")
     if len(parts) != 3:
         return False

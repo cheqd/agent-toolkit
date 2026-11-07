@@ -23,7 +23,7 @@ CLIENT_DID = "did:web:client.example"
 def keypair() -> tuple[Ed25519PrivateKey, dict]:
     sk = Ed25519PrivateKey.generate()
     x = base64.urlsafe_b64encode(sk.public_key().public_bytes_raw()).rstrip(b"=").decode()
-    return sk, {"kty": "OKP", "crv": "Ed25519", "x": x}
+    return sk, {"kty": "OKP", "crv": "Ed25519", "x": x, "kid": SERVER_KID}
 
 
 async def consume_factory():

@@ -473,14 +473,67 @@ unverified claim.
 **Consequences.** This is tested and proven correct for a Python client talking to a Python
 server built on this package (the realistic case: a Python agent calling another Python
 agent). It does NOT prove - and this document does not claim - that a real TypeScript
-`@a2a-js/sdk` client's proof verifies against this Python gate, or vice versa. That would need
-an actual cross-language conformance run (the same kind of exercise
-`conformance/run-a2a-gate-vectors.mjs` does for the TypeScript side) with a real
-`MessageToDict`/`ParseDict` round trip against actual wire captures - not yet done.
+`@a2a-js/sdk` client's proof verifies against this Python gate, or vice versa, AT THE
+`gate.py`/`client.py` WIRING LAYER specifically (the `MessageToDict`/`ParseDict` round trip
+against real JSON-RPC/REST wire bytes). The two PROOF ENGINES underneath that layer (D13's
+`org.kya-os/proof.v1`, D14's `org.kya-os/response-proof`) ARE now verified cross-language -
+see D16.
 
-**Revisit-if:** a real cross-language A2A conformance run is attempted, or the real `a2a-sdk`
-is wired in end-to-end (at which point the `MessageToDict` conversion's fidelity needs to be
-verified against actual JSON-RPC and REST wire bytes, not assumed).
+**Revisit-if:** a real cross-language A2A conformance run is attempted at the wiring layer, or
+the real `a2a-sdk` is wired in end-to-end (at which point the `MessageToDict` conversion's
+fidelity needs to be verified against actual JSON-RPC and REST wire bytes, not assumed).
+
+---
+
+## D16. Real TypeScript↔Python conformance run on both proof engines - two bugs found and fixed
+
+**Context.** D15 flagged that cross-language interop was unverified. The two PROOF ENGINES
+(D13, D14) don't depend on `a2a-sdk` at all - `buildCardProof`/`verifyCardProof` and
+`ProofGenerator`/`ProofVerifier` operate on plain `{method, params}`/`{data}` shapes
+regardless of transport - so this part of D15's gap was directly testable without touching
+the unverified `MessageToDict` boundary at all.
+
+**What was run.** Using the REAL `@kya-os/mcp` package already installed in this repo's
+`node_modules` (not a reimplementation, not mocked): minted a card proof (`proof.v1`) in
+Node with `ed25519SignerFromJwk`/`buildCardProof` and verified it in Python with
+`verify_card_proof`; minted the same proof type in Python and verified it with the real
+`verifyCardProof` in Node; repeated both directions for the response-proof
+(`ProofGenerator.generateProof` / `generate_response_proof`, `ProofVerifier.verifyProof` /
+`verify_response_proof`); confirmed a Node-signed proof's `requestHash`/`responseHash` are
+byte-identical to a Python-signed proof over the same content (JCS canonicalisation parity,
+not just "verification passed"); confirmed a tampered field (audience) signed by Node is
+correctly rejected by the Python verifier.
+
+**Two real bugs found and fixed, not merely confirmed-correct:**
+
+1. `CardProofMeta`'s strict parser (`types.py`) had no `httpSig` field, so any proof minted by
+   a real signer with a `signRaw` seam (every `@kya-os/mcp` signer, by default) was rejected
+   outright as `malformed_proof` - the Python verifier could not accept proofs from the real
+   reference implementation at all until this was added. Fixed by adding the field (ignored
+   for verification, matching D13's documented http-sig scope, but no longer a reason to
+   reject the proof's presence).
+2. `verify_response_proof`'s signature check never required the caller-supplied public JWK to
+   declare the `kid` it was resolved for - `CryptoService.verifyJWS`'s TypeScript original
+   does (`publicKeyJwk.kid !== options.expectedKid` fails closed), a real integrity check
+   against a misconfigured or stale key resolver that the Python port silently dropped. Fixed
+   by adding the same check; every existing Python test's fixture JWKs needed a `kid` field
+   added as a result, which is itself evidence this was a genuine gap, not a cosmetic one.
+
+**Why this matters.** Both bugs were invisible to the existing 185 Python-only tests, because
+every one of them built its own matching key material end-to-end and never exercised what a
+REAL, independently-built signer actually produces. This is exactly the blind spot a
+same-codebase test suite cannot see into by construction - only a real second implementation
+surfaces it.
+
+**Consequences.** The two `org.kya-os/*` proof engines are now verified interoperable with
+the real reference implementation, not merely internally consistent. The `gate.py`/`client.py`
+wiring layer's `MessageToDict` boundary (D15) remains the one still-untested seam - a
+different, transport-shaped question from "does the cryptography interoperate," which this
+run answers conclusively: yes.
+
+**Revisit-if:** `@kya-os/mcp` ships a new card-proof or response-proof field; re-run the same
+two-directional mint/verify check on both engines before trusting a future `npm update`
+silently stays compatible.
 
 ---
 
