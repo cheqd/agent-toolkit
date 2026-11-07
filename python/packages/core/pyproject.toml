@@ -1,0 +1,60 @@
+[tool.poetry]
+name = "cheqd-agent-identity"
+version = "0.0.0"
+description = "DRAFT — shared identity core. Early exploration, not reviewed or stable. Python port of @cheqd/agent-identity."
+authors = []
+license = "Apache-2.0"
+packages = [{ include = "cheqd_agent_identity", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+rfc8785 = "^0.1.4"
+httpx = "^0.28.1"
+cryptography = ">=44.0.0"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "0.12.8"
+pytest = "^8.3.5"
+pytest-asyncio = "^1.1.0"
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "C", "D"]
+ignore = [
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "D105",
+    "D106",
+    "D107",
+    "D203",
+    "D204",
+    "D205",
+    "D213",
+    "D215",
+    "D400",
+    "D401",
+    "D404",
+    "D406",
+    "D407",
+    "D408",
+    "D409",
+    "D413",
+    "D202",
+    "C901",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F841", "D", "E501"]
+
+[tool.pytest.ini_options]
+testpaths = "tests"
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["poetry-core>=2.1"]
+build-backend = "poetry.core.masonry.api"

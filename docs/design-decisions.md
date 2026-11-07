@@ -221,6 +221,185 @@ This is documented in the module's own comment because it is easy to misread as 
 
 ---
 
+## D10. Scoping the Python port against `@kya-os/mcp`
+
+**Context.** `python/packages/core` ports `@cheqd/agent-identity`. Two of its nine TypeScript
+modules — `status/status-list-resolver.ts` and `status/eddsa-jcs-status.ts` — exist only to
+adapt this package's own logic to `@kya-os/mcp`'s provider seams (`StatusListResolver`,
+`BitstringRevocationChecker`, `NonceCacheProvider`). No Python package published anywhere
+implements `@kya-os/mcp`'s delegation/provider framework (checked PyPI directly for `kya-os`
+and `kya-os-mcp`: neither exists); the only Python artefact from that project is an independent
+*conformance verifier* for the proof-layer vectors, not the provider framework itself.
+
+**Decision.** The Python core package ports every module that is cheqd's own self-contained
+logic (`agent_card`, `did_cheqd`, `linkage`, `proof/eddsa_jcs_2022`, `status/ledger_anchored`,
+`dlr/resolve_manifest`) faithfully, including its full test suite. It does NOT port
+`status-list-resolver.ts` or `eddsa-jcs-status.ts`. `replay/file_nonce_cache.py` still exists,
+but subclasses a plain Python ABC (`NonceCacheProvider`) defined locally in this package — the
+same method contract `@kya-os/mcp`'s TypeScript interface declares, re-specified rather than
+imported, since there is nothing to import from.
+
+**Why.** Porting the two skipped modules would mean re-implementing a chunk of someone else's
+MCP delegation framework in Python speculatively, with no consumer for it on the Python side -
+out of scope for a trust-binding port, and a maintenance burden with no corresponding upstream
+to track.
+
+**Consequences.** The Python core package's public surface for credential-status checking is
+`verify_ledger_anchored_status` only (the ledger-anchored, resolver-checksum path) — there is no
+Python equivalent of the decision-6 `eddsa-jcs-2022` proof-based status list path yet. If a
+Python KYA-OS-shaped delegation framework is ever built, these two modules are the template to
+follow when wiring this package's ledger-anchored check into it.
+
+**Revisit-if:** a Python `@kya-os/mcp` equivalent is published, or a consumer needs the
+proof-based status list path specifically.
+
+---
+
+## D11. The Python AP2 port and the `sd-jwt` reference library's real gaps
+
+**Context.** Unlike `packages/a2a`, almost all of `packages/ap2` is cheqd's own self-contained
+logic (constraints, mandate-chain linking, max-flow line-item matching, the mandate
+consumption store, `cnf` fusion, the authorised-secondary-key path) with no `@kya-os/mcp`
+dependency - only `sd-jwt-presentation.ts`'s crypto layer is external (`@sd-jwt/core`). The
+Python port uses PyPI's `sd-jwt` (the IETF SD-JWT spec's own reference implementation), the
+closest Python equivalent. Verified empirically against two real defects in that library
+(version 0.10.4), not assumed:
+
+1. `SDJWTVerifier._verify_sd_jwt`/`_verify_key_binding_jwt` never check `exp`/`iat` at all - a
+   literal `# TODO: Check exp/nbf/iat` left in its own source.
+2. `SDJWTVerifier.__init__` calls `_verify_key_binding_jwt` without forwarding an explicit
+   algorithm, so it silently defaults to `ES256` regardless of what algorithm the token
+   actually used - an Ed25519-signed Key Binding JWT fails verification against the library's
+   own default path (reproduced directly: `jwt.exceptions`-equivalent `InvalidJWSSignature:
+   "alg" mismatch, requested "ES256", found "EdDSA"`).
+
+**Decision.** `python/packages/ap2/src/cheqd_agent_identity_ap2/sd_jwt_presentation.py`
+subclasses `SDJWTVerifier` (`_AlgPinnedVerifier`) to pass each signer's own algorithm, derived
+from its JWK's `kty` (matching this programme's existing EdDSA/ES256 allow-list), and adds its
+own `exp`/`iat`/skew check after the library's verification succeeds - the same shape
+`@sd-jwt/core`'s `skewSeconds`/`currentDate` options already gave the TypeScript package. The
+library also has no public way to add a `transaction_data` claim to a KB-JWT it builds
+(`SDJWTHolder.create_presentation`'s KB-JWT payload is a fixed `{nonce, aud, iat, sd_hash}`
+dict) - this only affects test-fixture construction (a verifier reads whatever claims are
+present in an already-signed KB-JWT; it was never calling the holder's issuance path), so the
+Python test suite builds its KB-JWT fixtures directly with `jwcrypto`, reproducing the
+library's own `sd_hash` computation rather than reimplementing SD-JWT disclosure logic.
+
+**Why.** Both defects are narrow and fixable by subclassing/wrapping the existing, tested
+verification logic - not reasons to hand-roll SD-JWT-VC parsing or KB-JWT verification
+ourselves. Silently trusting the library's untested-for-this-programme defaults (ES256-only KB-
+JWT, no expiry enforcement) would have been a real security regression versus the TypeScript
+package, caught here only because the port was run end-to-end against real Ed25519 keys rather
+than assumed to work from the library's docs.
+
+**Consequences.** `_AlgPinnedVerifier` is coupled to `sd-jwt` 0.10.4's private method
+signatures (`_verify_sd_jwt`, `_verify_key_binding_jwt`, `_holder_public_key_payload`) - a
+future upstream release could rename or remove them silently, since they are not part of the
+library's public API. Covered only by this package's own test suite, not upstream's; revisit
+on every `sd-jwt` version bump.
+
+**Revisit-if:** `sd-jwt` ships a release that fixes either defect upstream (at which point the
+subclass override becomes unnecessary and should be removed, not kept "for safety"), or renames
+the private methods this subclass depends on.
+
+---
+
+## D12. The Python A2A port was initially partial - the proof-verification gate itself wasn't ported
+
+**Context.** Unlike AP2, almost everything in `packages/a2a` imports directly from
+`@kya-os/mcp/card`, `@kya-os/mcp/proof` or `@kya-os/mcp/providers`: `user-builder.ts` and
+`grpc-user-builder.ts` call `verifyCardProof`; `client.ts` calls `buildCardProof` and
+`ProofVerifier`; `wrapper.ts` calls `ProofGenerator`. These are not thin adapters over
+cheqd's own logic (unlike `status-list-resolver.ts`/`eddsa-jcs-status.ts` in D10) - they ARE
+the A2A trust binding's actual holder-of-key proof construction and verification, which this
+programme has always deliberately reused from `@kya-os/mcp` rather than forked (see the
+repository README's "What this builds on"). Only `covered-request.ts` (canonical request
+shaping) and `trust-extension.ts` (composed from this package's own core building blocks) are
+self-contained.
+
+**Decision (superseded - see D13).** `python/packages/a2a` initially ported only
+`covered_request.py` and `trust_extension.py`. A from-spec `org.kya-os/proof.v1` engine was
+built afterward (D13) once the scope of that gap was sized and approved, so this no longer
+describes the package's actual state - kept for the record of why the gap existed at all.
+
+**Why.** `@kya-os/mcp`'s `org.kya-os/proof.v1` profile (RFC 8785 JCS canonicalisation, detached
+JWS, RFC 9421 HTTP Message Signatures, RFC 7638 `cnf` thumbprint fusion) is published as a
+cross-language-verified profile - its own conformance suite ships an independent Python
+stdlib-only reference verifier (`conformance/verify.py`, MIT-licensed, confirmed directly
+against `node_modules/@kya-os/mcp/CONFORMANCE.md` and `LICENSE`) precisely so other languages
+don't re-derive this construction from spec prose. That reference verifier is a
+conformance-vector checker, not a packaged library - so the engine (D13) was built by reading
+`@kya-os/mcp`'s actual TypeScript source directly, not by consuming a library.
+
+**Consequences.** Addressed by D13.
+
+**Revisit-if:** n/a - see D13.
+
+---
+
+## D13. A from-spec Python `org.kya-os/proof.v1` engine, read directly from `@kya-os/mcp`'s source
+
+**Context.** D12 left the Python A2A package without a working proof gate. `@kya-os/mcp`
+(MIT-licensed) has no Python package to depend on, but its TypeScript source is directly
+readable (`node_modules/@kya-os/mcp/dist/card/proof/*.js`), and the profile itself
+(`org.kya-os/proof.v1`) is a published, cross-language-verified spec, not a proprietary
+construction - reimplementing it from that source is porting a specification, not
+reverse-engineering a product.
+
+**Decision.** `python/packages/a2a/src/cheqd_agent_identity_a2a/proof/` ports
+`canonical.ts`, `types.ts`, `signer.ts`, `build.ts` and `verify.ts` faithfully - every
+fail-closed check in `verify_card_proof` (kid/did binding, DID-membership RFC 7638
+thumbprint proof, audience, request-hash, replay via the atomic nonce seam, the
+created/expires window, the detached-JWS signature, the small-order Ed25519 key rejection,
+and the `cnf.jkt` sender-constraint fusion to L3/L3-minus) is present, read line-by-line from
+the TypeScript source, not reconstructed from the SPEC prose alone. Two things are
+deliberately NOT ported:
+
+- **`http-sig.ts`** (the RFC 9421 HTTP Message Signature "dual carrier"). This A2A package
+  verifies proofs carried in JSON-RPC/REST message `metadata`, never as real HTTP headers -
+  `user_builder.py`/`wrapper.py` (still not built; see below) would never call it. Minting
+  still works with no `signRaw` seam: the proof ships JWS-only, exactly as the TypeScript
+  signer does when it omits one.
+- **An ES256 signer.** `signer.py` mints Ed25519 (EdDSA) only, matching this programme's
+  consistent Ed25519 posture elsewhere (`sd_jwt_presentation.py`'s algorithm choice,
+  `eddsa_jcs_2022.py`). `verify_card_proof` still VERIFIES both EdDSA and ES256 proofs (a
+  verifier must interoperate with any signer, not just ones this package mints) - proven
+  with a hand-built ES256 proof in `tests/test_proof.py`, not left as an unexercised branch.
+
+Still not ported: `user_builder.py`, `grpc_user_builder.py`, `wrapper.py`, `client.py` - the
+code that wires this engine into `@a2a-js/sdk`'s specific hooks. The engine is the hard part;
+wiring it into the Python `a2a-sdk` package's own hooks (already located and confirmed to
+exist: `a2a.utils.signing.create_signature_verifier` takes a `(kid, jku) -> key` callback
+shaped almost exactly like this package's own `create_retrieve_public_key`) is comparatively
+mechanical and was not yet scoped as its own piece of work.
+
+**Why.** The alternative - leaving the Python A2A package permanently unable to verify
+anything - makes every other package built on top of it (a Python AP2 consumer wanting A2A
+transport, for instance) unusable for its stated purpose. Reading the actual source rather
+than the SPEC prose avoids the two failure modes of a from-spec reimplementation: missing a
+narrow but load-bearing check (the small-order Ed25519 rejection is exactly this kind of
+check - easy to miss from prose, a real forgery vector if skipped), and silently diverging
+on a detail the spec leaves ambiguous but the reference implementation resolved one specific
+way (e.g. the exact RFC 9421 Content-Digest string format the `requestHash` claim must use,
+even though this package never sends that digest over real HTTP).
+
+**Consequences.** This module has no corresponding TypeScript *test* file to port from
+(`verify.ts`/`build.ts` are themselves the "specification" here, there being no
+`@kya-os/mcp` TypeScript test suite shipped in the npm package either) - its 34 tests were
+written directly against the fail-closed behaviour documented in `@kya-os/mcp`'s own source
+comments, each one chosen to prove a specific claim in those comments true of this
+reimplementation, not copied from an existing suite. A future `@kya-os/mcp` release could
+change the profile in a way this package would not pick up automatically (no dependency
+relationship exists to flag it) - revisit against the source on any reported interop failure
+with a real `org.kya-os/proof.v1` peer.
+
+**Revisit-if:** a Python package implementing this profile is ever published (switch to
+depending on it instead of maintaining this reimplementation), or `user_builder.py`/
+`wrapper.py`/`client.py` are scoped and built (the natural next step - this engine is what
+they were blocked on).
+
+---
+
 ## What this document doesn't cover
 
 - **The full threat model and negative-vector suite** — `docs/security/threat-model.md`,
