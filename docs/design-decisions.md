@@ -231,27 +231,58 @@ implements `@kya-os/mcp`'s delegation/provider framework (checked PyPI directly 
 and `kya-os-mcp`: neither exists); the only Python artefact from that project is an independent
 *conformance verifier* for the proof-layer vectors, not the provider framework itself.
 
-**Decision.** The Python core package ports every module that is cheqd's own self-contained
-logic (`agent_card`, `did_cheqd`, `linkage`, `proof/eddsa_jcs_2022`, `status/ledger_anchored`,
-`dlr/resolve_manifest`) faithfully, including its full test suite. It does NOT port
-`status-list-resolver.ts` or `eddsa-jcs-status.ts`. `replay/file_nonce_cache.py` still exists,
-but subclasses a plain Python ABC (`NonceCacheProvider`) defined locally in this package — the
-same method contract `@kya-os/mcp`'s TypeScript interface declares, re-specified rather than
-imported, since there is nothing to import from.
+**Decision (initial scope, later revisited below).** The Python core package ports every
+module that is cheqd's own self-contained logic (`agent_card`, `did_cheqd`, `linkage`,
+`proof/eddsa_jcs_2022`, `status/ledger_anchored`, `dlr/resolve_manifest`) faithfully,
+including its full test suite. It did NOT initially port `status-list-resolver.ts` or
+`eddsa-jcs-status.ts`. `replay/file_nonce_cache.py` still exists, but subclasses a plain
+Python ABC (`NonceCacheProvider`) defined locally in this package — the same method contract
+`@kya-os/mcp`'s TypeScript interface declares, re-specified rather than imported, since there
+is nothing to import from.
 
-**Why.** Porting the two skipped modules would mean re-implementing a chunk of someone else's
-MCP delegation framework in Python speculatively, with no consumer for it on the Python side -
-out of scope for a trust-binding port, and a maintenance burden with no corresponding upstream
-to track.
+**Why (at the time).** Porting the two skipped modules would have meant re-implementing a
+chunk of someone else's MCP delegation framework in Python speculatively, with no consumer
+for it on the Python side - out of scope for a trust-binding port, and a maintenance burden
+with no corresponding upstream to track.
+
+**Update: both modules are now ported, because this document's own "Revisit-if" fired.**
+`status/status_list_resolver.py` and `status/eddsa_jcs_status.py` now exist, built the same
+way as D13/D14/D17's a2a-engine work: reading `@kya-os/mcp`'s actual TypeScript source
+directly (`card/revocation.ts`, `card/status-list-proof.ts`, `cheqd/status-list-resolver.ts`,
+`utils/statuslist-bits.ts`, `utils/statuslist-purpose.ts`), not reconstructed from prose. This
+did NOT require depending on `@kya-os/mcp`'s delegation framework, because that framework was
+never actually load-bearing for these two specific files - re-reading them for this port
+showed `status-list-proof.ts`'s `verifyEddsaJcs2022` is the SAME `eddsa-jcs-2022`
+cryptosuite construction `proof/eddsa_jcs_2022.py` already ports (built earlier for agent-card
+verification), so `status_list_proof.py` is a thin adapter over that EXISTING verifier, not a
+second implementation of it. The only genuinely new code is `statuslist_bits.py` (index
+parsing, GZIP inflation with the 16 MiB decompression-bomb cap, MSB-first bit read) and
+`revocation.py` (the fetch/verify/decode/read pipeline, `RevocationChecker`, and
+`evaluate_revocation_chain`'s cascading-fail-closed chain walk) - both re-specified locally,
+the same `NonceCacheProvider` pattern this decision already used for the replay cache.
+
+One deliberate deviation from the TypeScript original, documented in `statuslist_bits.py`'s
+own module docstring: the `decompress` seam is a plain SYNCHRONOUS `bytes -> bytes` callable,
+not async - the TypeScript seam is async only so a Workers/browser bundle can inject
+`CompressionStream` instead of `node:zlib`, a bundler concern with no Python equivalent.
+
+Confirmed end-to-end against a REAL, hand-signed `eddsa-jcs-2022` proof over a REAL
+gzip-compressed `encodedList` (`tests/test_eddsa_jcs_status.py`) - not just unit-tested
+pieces assembled on faith that they compose correctly.
 
 **Consequences.** The Python core package's public surface for credential-status checking is
-`verify_ledger_anchored_status` only (the ledger-anchored, resolver-checksum path) — there is no
-Python equivalent of the decision-6 `eddsa-jcs-2022` proof-based status list path yet. If a
-Python KYA-OS-shaped delegation framework is ever built, these two modules are the template to
-follow when wiring this package's ledger-anchored check into it.
+now both `verify_ledger_anchored_status` (the ledger-anchored, resolver-checksum path) AND
+`create_cheqd_status_checker` (the decision-6 `eddsa-jcs-2022` proof-based status list path).
+Same caveat as the TypeScript original: `did-provider-cheqd` 4.8.0 does not yet produce a
+list this verifier accepts (cheqd/did-provider-cheqd#657); this is written against the format
+the open, unmerged `#658` produces - nothing left to change here once it ships.
 
-**Revisit-if:** a Python `@kya-os/mcp` equivalent is published, or a consumer needs the
-proof-based status list path specifically.
+**Revisit-if:** `@kya-os/mcp` changes either `revocation.ts`'s or `status-list-proof.ts`'s
+construction (re-read the source and re-sync, the same `D16`/`D17`-style conformance
+discipline used for the a2a package) - there is no dependency relationship to flag this
+automatically, since this is a from-spec re-specification of the provider seams, not an
+import. Also revisit once `did-provider-cheqd#658` merges, to swap the synthetic test fixture
+for a real on-chain resource.
 
 ---
 
