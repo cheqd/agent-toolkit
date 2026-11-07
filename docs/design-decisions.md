@@ -304,6 +304,49 @@ the private methods this subclass depends on.
 
 ---
 
+## D12. The Python A2A port is partial - the proof-verification gate itself isn't ported
+
+**Context.** Unlike AP2, almost everything in `packages/a2a` imports directly from
+`@kya-os/mcp/card`, `@kya-os/mcp/proof` or `@kya-os/mcp/providers`: `user-builder.ts` and
+`grpc-user-builder.ts` call `verifyCardProof`; `client.ts` calls `buildCardProof` and
+`ProofVerifier`; `wrapper.ts` calls `ProofGenerator`. These are not thin adapters over
+cheqd's own logic (unlike `status-list-resolver.ts`/`eddsa-jcs-status.ts` in D10) - they ARE
+the A2A trust binding's actual holder-of-key proof construction and verification, which this
+programme has always deliberately reused from `@kya-os/mcp` rather than forked (see the
+repository README's "What this builds on"). Only `covered-request.ts` (canonical request
+shaping) and `trust-extension.ts` (composed from this package's own core building blocks) are
+self-contained.
+
+**Decision.** `python/packages/a2a` ports `covered_request.py` and `trust_extension.py` only.
+It does NOT port `user_builder.py`, `grpc_user_builder.py`, `wrapper.py` or `client.py` - the
+`userBuilder` + enforcing-wrapper gate design itself, and the client-side proof-building
+interceptor.
+
+**Why.** `@kya-os/mcp`'s `org.kya-os/proof.v1` profile (RFC 8785 JCS canonicalisation, detached
+JWS, RFC 9421 HTTP Message Signatures, RFC 7638 `cnf` thumbprint fusion) is published as a
+cross-language-verified profile - its own conformance suite ships an independent Python
+stdlib-only reference verifier (`conformance/verify.py`, MIT-licensed, confirmed directly
+against `node_modules/@kya-os/mcp/CONFORMANCE.md` and `LICENSE`) precisely so other languages
+don't re-derive this construction from spec prose. But that reference verifier is a
+conformance-vector checker, not a packaged library with the provider/DI surface
+(`CryptoProvider`, `ClockProvider`, `FetchProvider`, `NonceCacheProvider`,
+`buildCardProof`/`verifyCardProof`) this package's gate wires into - building that surface in
+Python is a real, separate piece of engineering, not a port of these four files.
+
+**Consequences.** The Python A2A package currently has no runnable server-side verification
+gate or client-side signing interceptor - `trust_extension.py` is usable only once some other
+component has already produced a verified caller DID. The design is proven out completely in
+TypeScript (gate ordering, fail-closed `userBuilder`, the enforcing wrapper's response proof);
+a Python gate would follow the exact same shape once a Python `org.kya-os/proof.v1`
+implementation exists to build it on.
+
+**Revisit-if:** a Python package implementing `@kya-os/mcp`'s proof.v1 profile (even just
+`buildCardProof`/`verifyCardProof`, not the full MCP delegation framework) is built or
+published - at which point `user_builder.py`/`wrapper.py`/`client.py` port directly from their
+TypeScript originals with no design changes, only the proof-layer import swapped.
+
+---
+
 ## What this document doesn't cover
 
 - **The full threat model and negative-vector suite** — `docs/security/threat-model.md`,

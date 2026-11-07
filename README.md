@@ -21,6 +21,16 @@ DID-anchored identity, delegation and per-request proof for agentic protocols.
 
 The two bindings both depend on the core and not on each other, so an AP2 consumer never installs the A2A SDK.
 
+## Python port
+
+[`python/packages/`](./python/packages) ports the TypeScript packages above, package boundary for package boundary, using Poetry/Ruff/pytest (matching `cheqd/acapy-plugins`' convention, not invented here). It is **partial**, not parity:
+
+| Package | Status |
+|---|---|
+| [`cheqd-agent-identity`](./python/packages/core) | Fully ported, except the two modules that adapt to `@kya-os/mcp`'s provider seams (no Python equivalent exists) — see `docs/design-decisions.md` D10. |
+| [`cheqd-agent-identity-ap2`](./python/packages/ap2) | Fully ported, using PyPI's `sd-jwt` for the SD-JWT-VC/KB-JWT crypto layer in place of `@sd-jwt/core` — see D11. |
+| [`cheqd-agent-identity-a2a`](./python/packages/a2a) | **Partial.** Only the canonical request shape and the trust extension are ported — the actual holder-of-key proof verification gate is built entirely on `@kya-os/mcp`, which has no Python equivalent — see D12. |
+
 ## What this builds on
 
 No new cryptography is proposed. The proof profile, its canonicalisation and its conformance vectors already exist upstream and would be reused unchanged:
