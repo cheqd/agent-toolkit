@@ -302,6 +302,13 @@ on every `sd-jwt` version bump.
 subclass override becomes unnecessary and should be removed, not kept "for safety"), or renames
 the private methods this subclass depends on.
 
+**Reported upstream:** both defects filed against `openwallet-foundation-labs/sd-jwt-python`:
+[#28](https://github.com/openwallet-foundation-labs/sd-jwt-python/issues/28) (`exp`/`iat`
+never checked) and
+[#29](https://github.com/openwallet-foundation-labs/sd-jwt-python/issues/29) (KB-JWT
+verification hardcodes `ES256`). Neither had an existing issue on file. If either is fixed
+upstream, remove the corresponding override in `_AlgPinnedVerifier` rather than keeping it.
+
 ---
 
 ## D12. The Python A2A port was initially partial - the proof-verification gate itself wasn't ported
