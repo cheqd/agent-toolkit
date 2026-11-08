@@ -559,11 +559,9 @@ answers:
    JS number is a double; `.int()` only rejects a fractional part, never the underlying
    representation).
 
-**Revisit-if:** a real cross-language A2A conformance run (TypeScript client -> Python
-server, or vice versa) is attempted at the wiring layer - this remains unverified; only the
-Python-proto-to-Python-gate round trip above is. Or `a2a-sdk` changes `SendMessageRequest`'s
-`metadata` field type away from `google.protobuf.Struct` (unlikely, but would invalidate the
-float-coercion fix's premise).
+**Revisit-if:** `a2a-sdk` changes `SendMessageRequest`'s `metadata` field type away from
+`google.protobuf.Struct` (unlikely, but would invalidate the float-coercion fix's premise).
+The cross-language wiring-layer gap this paragraph used to flag as open is closed - see D18.
 
 ---
 
@@ -651,6 +649,67 @@ verification - never how long the nonce cache was asked to retain an entry. It t
 the TS source's cache-TTL arithmetic line-by-line, not running it against a real peer, to find.
 This is a different blind spot from D16's (schema/signature incompatibility vs. cache-lifetime
 arithmetic) - both are necessary, neither alone is sufficient.
+
+---
+
+## D18. Real cross-language A2A conformance at the wiring layer - D15's last open gap, closed
+
+**Context.** D16/D17 verified the two `org.kya-os/*` proof engines cross-language, but
+deliberately below the `a2a-sdk` wiring layer (D15's "Consequences" said so explicitly). D15's
+own "Revisit-if" named the one thing still unverified: whether a real TypeScript client's wire
+JSON, produced by `@a2a-js/sdk`'s real `SendMessageRequest.toJSON`, is actually accepted by
+Python's real `gate.py` once bridged through `proto_bridge.py` (D15's update) - and the
+reverse. `tests/test_proto_bridge.py` only ever exercised a Python-proto-to-Python-gate round
+trip; no real TypeScript peer was ever on the other end.
+
+**What was built.** `conformance/cross-language-a2a-wire.mjs` (TS) and
+`python/packages/a2a/conformance_cross_language.py` (Python), each with a `mint` mode and a
+`verify` mode, committed (not scratch) and wired into CI
+(`.github/workflows/cross-language.yml`, called from `dispatch.yml`):
+
+- **TS mints, Python verifies.** `mint` acts as `client.ts`'s own code path, unmodified:
+  `createProofInterceptor` + the real `ed25519SignerFromJwk`, serialized through the real
+  `SendMessageRequest.toJSON`. `verify` on the Python side round-trips that JSON through a
+  real `ParseDict(..., SendMessageRequest())`/`MessageToDict` (exactly `proto_bridge.py`'s own
+  conversion) and calls `gate.py`'s real `verify_caller`, unmodified.
+- **Python mints, TS verifies.** The mirror image: `client.py`'s real `ProofInterceptor.
+  before`, round-tripped through the real a2a-sdk proto, verified on the TS side by
+  `user-builder.ts`'s own `createVerifyingUserBuilder`, unmodified, after a
+  `SendMessageRequest.fromJSON`/`toJSON` round trip on that side too (the TS-side proto-shape
+  coercion a real TS server would also apply).
+
+Both directions were run by hand first (not assumed from the CI job passing): a well-formed
+request verifies and resolves the correct `did` in both directions; a request tampered with
+after minting but before the proto round trip is rejected with `request_hash_mismatch` in
+both directions, in both languages.
+
+**Result: zero new bugs found.** Unlike D16's first run, this wiring-layer run found no
+incompatibility - the only real finding at this layer was D15's own
+`google.protobuf.Struct` float-coercion fix, already made and already covered by
+`test_proto_bridge.py`. One implementation detail surfaced while building the TS `mint` mode,
+worth recording so it isn't rediscovered: `SendMessageRequest.fromJSON`/`.toJSON` (ts-proto)
+store `Message.parts[].content` as an internal `{ $case: 'text', value }` union, not the wire's
+bare `{ text }` shape - a hand-built literal in that internal shape silently drops the part
+(serializes as `{}`), so the script builds the request via `SendMessageRequest.fromJSON`
+first, never a hand-rolled literal pretending to be the typed object.
+
+**Why a committed CI job, not another scratch script.** Every prior cross-language check in
+this programme (D16, D17's audit, and the earlier Python-port session's own conformance runs)
+was written as a throwaway `.mjs`/script, run once, then deleted - correct for a one-off
+question, but it means a future dependency bump (`a2a-sdk`, `@a2a-js/sdk`, or either proto
+schema changing) could silently break this specific interop guarantee with nothing catching
+it. This is the one cross-language check in the repo kept permanently: run on every push via
+`dispatch.yml`'s new `call-cross-language` job, using the same real SDKs as production, not a
+hand-rolled stand-in for either.
+
+**Consequences.** D15's "Revisit-if" is satisfied. The full chain - a real `@a2a-js/sdk`
+client or a real `a2a-sdk` (Python) client, through the real proto wire shape, through the
+opposite language's real gate/userBuilder - is now verified interoperable, not merely
+internally consistent, and re-verified automatically on every push.
+
+**Revisit-if:** `@a2a-js/sdk` or `a2a-sdk` ships a `SendMessageRequest`/`Message` schema
+change (a new required field, a renamed `Part` union case, etc.) - re-run both directions by
+hand before trusting the CI job's continued pass is still testing the same thing.
 
 ---
 

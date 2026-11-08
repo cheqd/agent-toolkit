@@ -19,3 +19,8 @@ jobs:
     name: "Python"
     uses: ./.github/workflows/python.yml
     secrets: inherit
+
+  call-cross-language:
+    name: "Cross-language conformance"
+    uses: ./.github/workflows/cross-language.yml
+    secrets: inherit
