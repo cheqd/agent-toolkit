@@ -1,0 +1,66 @@
+name: "Cross-language conformance"
+on:
+  workflow_call:
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  a2a-wire:
+    name: "A2A wire conformance (TS <-> Python)"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build TS packages
+        run: npm run build
+
+      - name: Install Poetry
+        run: pipx install poetry==2.5.1
+
+      - name: Install Python a2a package
+        working-directory: python/packages/a2a
+        run: poetry install --no-interaction
+
+      - name: TS client mints, real Python gate verifies (and rejects on tamper)
+        run: |
+          node conformance/cross-language-a2a-wire.mjs mint > /tmp/ts-mint.json
+          (cd python/packages/a2a && poetry run python conformance_cross_language.py verify) < /tmp/ts-mint.json
+          python3 -c "
+          import json
+          d = json.load(open('/tmp/ts-mint.json'))
+          d['wire']['message']['parts'][0]['text'] = 'TAMPERED'
+          json.dump(d, open('/tmp/ts-mint-tampered.json', 'w'))
+          "
+          if (cd python/packages/a2a && poetry run python conformance_cross_language.py verify) < /tmp/ts-mint-tampered.json; then
+            echo "::error::tampered TS-minted request was accepted by the Python gate"
+            exit 1
+          fi
+
+      - name: Python client mints, real TS userBuilder verifies (and rejects on tamper)
+        run: |
+          (cd python/packages/a2a && poetry run python conformance_cross_language.py mint) > /tmp/py-mint.json
+          node conformance/cross-language-a2a-wire.mjs verify < /tmp/py-mint.json
+          python3 -c "
+          import json
+          d = json.load(open('/tmp/py-mint.json'))
+          d['wire']['message']['parts'][0]['text'] = 'TAMPERED'
+          json.dump(d, open('/tmp/py-mint-tampered.json', 'w'))
+          "
+          if node conformance/cross-language-a2a-wire.mjs verify < /tmp/py-mint-tampered.json; then
+            echo "::error::tampered Python-minted request was accepted by the TS userBuilder"
+            exit 1
+          fi
