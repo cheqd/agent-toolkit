@@ -24,7 +24,13 @@ class _Response:
 
 
 def _credential(
-    *, encoded_list: str, purpose: str = "revocation", valid_until=None, valid_from=None, issuer=None
+    *,
+    encoded_list: str,
+    purpose: str = "revocation",
+    valid_until=None,
+    valid_from=None,
+    issuer=None,
+    list_id=None,
 ):
     subject = {"statusPurpose": purpose, "encodedList": encoded_list}
     credential = {"credentialSubject": subject}
@@ -34,6 +40,8 @@ def _credential(
         credential["validFrom"] = valid_from
     if issuer is not None:
         credential["issuer"] = issuer
+    if list_id is not None:
+        credential["id"] = list_id
     return credential
 
 
@@ -250,6 +258,80 @@ async def test_a_status_list_from_an_attacker_controlled_issuer_fails_closed():
 
 
 async def test_a_status_list_from_the_bound_issuer_is_accepted():
+    bits = bytes([0b00000000])
+    credential = _credential(encoded_list=_encode(bits), issuer="did:example:real-issuer")
+
+    async def fetch(_url):
+        return _Response(ok=True, status=200, body=credential)
+
+    async def verify_status_list(_credential):
+        return True
+
+    entry = StatusEntry(
+        status_list_credential="https://example/list", status_list_index="0", status_purpose="revocation"
+    )
+    check = create_revocation_checker(fetch=fetch, verify_status_list=verify_status_list)
+    verdict = await check(entry, "did:example:real-issuer")
+    assert verdict.revoked is False
+
+
+async def test_a_same_issuer_list_served_at_the_wrong_url_fails_closed_on_id_mismatch():
+    """The id-binding regression: the issuer-equality check alone is not enough. The SAME
+    issuer may keep more than one genuine, validly-signed list (or an older revision of this
+    one); whoever controls what `entry.status_list_credential`'s URL actually returns (a host,
+    CDN, cache, or injected-fetch bug) can serve a DIFFERENT list of theirs - one that is not
+    the list that was actually requested - and, before this fix, Python accepted it purely
+    because the issuer matched. The list below states its OWN `id` as a different URL than the
+    one it was fetched from, so it must be refused even though its issuer and proof are fine.
+    """
+    bits = bytes([0b00000000])  # the substituted list clears the bit
+    credential = _credential(
+        encoded_list=_encode(bits),
+        issuer="did:example:real-issuer",
+        list_id="https://example/some-other-list-the-same-issuer-also-keeps",
+    )
+
+    async def fetch(_url):
+        return _Response(ok=True, status=200, body=credential)
+
+    async def verify_status_list(_credential):
+        return True  # the substituted list's own proof verifies fine - it IS genuine, just not THIS one
+
+    entry = StatusEntry(
+        status_list_credential="https://example/list", status_list_index="0", status_purpose="revocation"
+    )
+    check = create_revocation_checker(fetch=fetch, verify_status_list=verify_status_list)
+    verdict = await check(entry, "did:example:real-issuer")
+    assert verdict.revoked is True
+
+
+async def test_a_list_whose_stated_id_matches_the_requested_url_is_accepted():
+    bits = bytes([0b00000000])
+    credential = _credential(
+        encoded_list=_encode(bits),
+        issuer="did:example:real-issuer",
+        list_id="https://example/list",
+    )
+
+    async def fetch(_url):
+        return _Response(ok=True, status=200, body=credential)
+
+    async def verify_status_list(_credential):
+        return True
+
+    entry = StatusEntry(
+        status_list_credential="https://example/list", status_list_index="0", status_purpose="revocation"
+    )
+    check = create_revocation_checker(fetch=fetch, verify_status_list=verify_status_list)
+    verdict = await check(entry, "did:example:real-issuer")
+    assert verdict.revoked is False
+
+
+async def test_a_list_that_states_no_id_is_still_accepted():
+    """A list is free to omit `id` entirely (W3C Bitstring Status List v1.0 SS2.2 makes it
+    optional); the id check only rejects a STATED id that names a different URL, mirroring
+    `@kya-os/mcp`'s `idRejection` for the "keeper is unconditionally the credential's own
+    issuer" case this module implements."""
     bits = bytes([0b00000000])
     credential = _credential(encoded_list=_encode(bits), issuer="did:example:real-issuer")
 
