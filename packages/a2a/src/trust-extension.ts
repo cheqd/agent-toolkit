@@ -106,6 +106,18 @@ export async function verifyTrustExtension(
 export interface TrustExtensionCacheOptions {
 	/** TTL in milliseconds. Default 5 minutes, matching `createManifestCache`'s default (spec §5.5). */
 	readonly ttlMs?: number;
+	/**
+	 * Hard cap on the number of distinct `(canonicalDid, activation)` entries kept at once.
+	 * Default 10,000. The cache key is derived from the CALLER's own verified DID (`enforce()`
+	 * in wrapper.ts always passes `user.verified.did` - the identity the request's proof was
+	 * just checked against, never attacker-supplied independently of that), but minting a new
+	 * DID is cheap (one keypair), and every lookup caches its result regardless of outcome - a
+	 * caller presenting a fresh self-asserted DID on every request, which fails the trust check
+	 * every time, would otherwise grow this Map forever. Once the cap is hit, the oldest entry
+	 * (by insertion order, which `Map` preserves) is evicted to make room - not a full LRU, but
+	 * enough to bound memory under sustained churn without adding a dependency.
+	 */
+	readonly maxEntries?: number;
 	/** Epoch milliseconds. Defaults to `Date.now`. */
 	readonly now?: () => number;
 }
@@ -113,18 +125,24 @@ export interface TrustExtensionCacheOptions {
 export interface TrustExtensionCache {
 	get(canonicalDid: string, activation: TrustExtensionActivation): Promise<TrustExtensionResult>;
 	clear(): void;
+	/** Current number of cached entries. Exposed for tests/observability, not part of the trust decision. */
+	size(): number;
 }
 
 const DEFAULT_TTL_MS = 5 * 60_000;
+const DEFAULT_MAX_ENTRIES = 10_000;
 
 /**
  * TTL-bounded cache over {@link verifyTrustExtension}, so a verified DID's trust-extension
  * checks are refreshed on a timer, not re-run against resolvers and manifests on every request
- * the gate verifies (spec §5.5: never per call).
+ * the gate verifies (spec §5.5: never per call). Also size-bounded - see `maxEntries` above -
+ * since the TTL alone does not stop the entry count itself from growing without bound between
+ * expirations.
  */
 export function createTrustExtensionCache(deps: TrustExtensionDeps, options: TrustExtensionCacheOptions = {}): TrustExtensionCache {
 	const now = options.now ?? Date.now;
 	const ttl = options.ttlMs ?? DEFAULT_TTL_MS;
+	const maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
 	const cache = new Map<string, { result: TrustExtensionResult; expiresAt: number }>();
 	return {
 		async get(canonicalDid, activation) {
@@ -132,11 +150,21 @@ export function createTrustExtensionCache(deps: TrustExtensionDeps, options: Tru
 			const cached = cache.get(key);
 			if (cached && cached.expiresAt > now()) return cached.result;
 			const result = await verifyTrustExtension(canonicalDid, activation, deps);
+			// A fresh lookup for an existing key must not grow the entry count, so evict (if
+			// needed) only when this key is new - otherwise a cache at exactly maxEntries would
+			// evict one entry on every refresh of an already-tracked DID for no reason.
+			if (!cache.has(key) && cache.size >= maxEntries) {
+				const oldest = cache.keys().next().value;
+				if (oldest !== undefined) cache.delete(oldest);
+			}
 			cache.set(key, { result, expiresAt: now() + ttl });
 			return result;
 		},
 		clear() {
 			cache.clear();
+		},
+		size() {
+			return cache.size;
 		},
 	};
 }
