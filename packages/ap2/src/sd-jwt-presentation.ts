@@ -110,6 +110,13 @@ async function verifyOpenMandate<Payload extends { vct: string; cnf: { jwk: Reco
 	const kb = (result as { kb?: { payload: Record<string, unknown> } }).kb;
 	if (!kb) throw new Error('missing_key_binding_jwt');
 	if (kb.payload['aud'] !== options.expectedAudience) throw new Error('key_binding_audience_mismatch');
+	const kbIat = kb.payload['iat'];
+	const skewSeconds = options.skewSeconds ?? 60;
+	const now = options.currentDate ?? Math.floor(Date.now() / 1000);
+	// Fail closed on a missing `iat` (never skip the freshness check) and reject a KB-JWT whose
+	// `iat` is more than `skewSeconds` away from now in either direction - mirrors the Python
+	// package's `abs(now - kb_iat) > skew_seconds` check.
+	if (typeof kbIat !== 'number' || Math.abs(now - kbIat) > skewSeconds) throw new Error('key_binding_stale');
 	const transactionData = kb.payload['transaction_data'];
 	return {
 		payload,

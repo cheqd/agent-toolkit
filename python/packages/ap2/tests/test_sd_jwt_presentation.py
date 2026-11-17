@@ -71,6 +71,8 @@ def build_presentation(
     constraints: list | None = None,
     include_transaction_data: bool = True,
     vct: str = "mandate.payment.open.1",
+    include_kb_iat: bool = True,
+    kb_iat: int | None = None,
 ) -> str:
     issuer_jwk = _jwcrypto_key_from_cryptography(issuer_private_key)
     open_mandate_payload = {
@@ -83,7 +85,9 @@ def build_presentation(
 
     sd_hash = _b64url(hashlib.sha256((sd_jwt_issuance + "").encode("ascii")).digest())
 
-    kb_payload: dict = {"nonce": nonce, "aud": aud, "iat": int(time.time()), "sd_hash": sd_hash}
+    kb_payload: dict = {"nonce": nonce, "aud": aud, "sd_hash": sd_hash}
+    if include_kb_iat:
+        kb_payload["iat"] = kb_iat if kb_iat is not None else int(time.time())
     if include_transaction_data:
         kb_payload["transaction_data"] = [transaction_data_hash(CLOSED_PAYMENT)]
 
@@ -215,3 +219,70 @@ async def test_an_open_checkout_mandate_presentation_whose_vct_is_some_unrelated
             expected_audience="did:web:merchant.example",
             expected_nonce="n-vct-2",
         )
+
+
+async def test_a_kb_jwt_with_an_iat_from_1970_no_max_age_is_rejected():
+    issuer_public_jwk, issuer_private_key = ed25519_keypair()
+    holder_public_jwk, holder_private_key = ed25519_keypair()
+
+    token = build_presentation(
+        issuer_private_key=issuer_private_key,
+        holder_public_jwk=holder_public_jwk,
+        kb_signing_key=holder_private_key,
+        aud="did:web:merchant.example",
+        nonce="n-1970",
+        kb_iat=0,
+    )
+
+    with pytest.raises(ValueError, match="key_binding_stale"):
+        await verify_open_payment_mandate_presentation(
+            token=token,
+            issuer_public_jwk=issuer_public_jwk,
+            expected_audience="did:web:merchant.example",
+            expected_nonce="n-1970",
+        )
+
+
+async def test_a_kb_jwt_with_no_iat_at_all_fails_closed_instead_of_skipping_the_check():
+    issuer_public_jwk, issuer_private_key = ed25519_keypair()
+    holder_public_jwk, holder_private_key = ed25519_keypair()
+
+    token = build_presentation(
+        issuer_private_key=issuer_private_key,
+        holder_public_jwk=holder_public_jwk,
+        kb_signing_key=holder_private_key,
+        aud="did:web:merchant.example",
+        nonce="n-no-iat",
+        include_kb_iat=False,
+    )
+
+    with pytest.raises(ValueError, match="key_binding_stale"):
+        await verify_open_payment_mandate_presentation(
+            token=token,
+            issuer_public_jwk=issuer_public_jwk,
+            expected_audience="did:web:merchant.example",
+            expected_nonce="n-no-iat",
+        )
+
+
+async def test_a_kb_jwt_just_within_the_skew_window_is_still_accepted():
+    issuer_public_jwk, issuer_private_key = ed25519_keypair()
+    holder_public_jwk, holder_private_key = ed25519_keypair()
+    now = int(time.time())
+
+    token = build_presentation(
+        issuer_private_key=issuer_private_key,
+        holder_public_jwk=holder_public_jwk,
+        kb_signing_key=holder_private_key,
+        aud="did:web:merchant.example",
+        nonce="n-fresh",
+        kb_iat=now - 30,
+    )
+
+    result = await verify_open_payment_mandate_presentation(
+        token=token,
+        issuer_public_jwk=issuer_public_jwk,
+        expected_audience="did:web:merchant.example",
+        expected_nonce="n-fresh",
+    )
+    assert result.key_binding.iat == now - 30

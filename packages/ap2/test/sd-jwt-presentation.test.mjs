@@ -34,7 +34,7 @@ const CLOSED_PAYMENT = {
 	payment_instrument: { id: 'card-1', type: 'card' },
 };
 
-async function buildPresentation({ issuer, holder, aud, nonce }) {
+async function buildPresentation({ issuer, holder, aud, nonce, kbIat = Math.floor(Date.now() / 1000) }) {
 	const issuerInstance = new SDJwtInstance({
 		hasher: sha256Hasher,
 		saltGenerator: (length) =>
@@ -57,14 +57,7 @@ async function buildPresentation({ issuer, holder, aud, nonce }) {
 		kbSignAlg: 'EdDSA',
 	});
 	return presenterInstance.present(issued, undefined, {
-		kb: {
-			payload: {
-				iat: Math.floor(Date.now() / 1000),
-				aud,
-				nonce,
-				transaction_data: [transactionDataHash(CLOSED_PAYMENT)],
-			},
-		},
+		kb: { payload: { iat: kbIat, aud, nonce, transaction_data: [transactionDataHash(CLOSED_PAYMENT)] } },
 	});
 }
 
@@ -224,6 +217,36 @@ test('an open checkout mandate presentation whose vct is some unrelated credenti
 			}),
 		/vct/i,
 	);
+});
+
+test('a KB-JWT with an iat from 1970 (no max-age) is rejected', async () => {
+	const issuer = ed25519Keypair();
+	const holder = ed25519Keypair();
+	const token = await buildPresentation({ issuer, holder, aud: 'did:web:merchant.example', nonce: 'n-1970', kbIat: 0 });
+
+	await assert.rejects(() =>
+		verifyOpenPaymentMandatePresentation({
+			token,
+			issuerPublicJwk: issuer.publicJwk,
+			expectedAudience: 'did:web:merchant.example',
+			expectedNonce: 'n-1970',
+		}),
+	);
+});
+
+test('a KB-JWT just within the skew window is still accepted', async () => {
+	const issuer = ed25519Keypair();
+	const holder = ed25519Keypair();
+	const now = Math.floor(Date.now() / 1000);
+	const token = await buildPresentation({ issuer, holder, aud: 'did:web:merchant.example', nonce: 'n-fresh', kbIat: now - 30 });
+
+	const result = await verifyOpenPaymentMandatePresentation({
+		token,
+		issuerPublicJwk: issuer.publicJwk,
+		expectedAudience: 'did:web:merchant.example',
+		expectedNonce: 'n-fresh',
+	});
+	assert.equal(result.keyBinding.iat, now - 30);
 });
 
 test('jwkVerifier rejects a tampered issuer-signed payload', async () => {
