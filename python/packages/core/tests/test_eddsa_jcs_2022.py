@@ -56,7 +56,11 @@ def world():
         if did != DID:
             return None
         return MinimalDidDocument(
-            id=DID, verification_method=(MinimalVerificationMethod(id=KID, public_key_jwk=public_key_jwk),)
+            id=DID,
+            verification_method=(
+                MinimalVerificationMethod(id=KID, type="JsonWebKey2020", controller=DID, public_key_jwk=public_key_jwk),
+            ),
+            assertion_method=(KID,),
         )
 
     return private_key, resolve_did_document
@@ -100,4 +104,84 @@ async def test_signed_by_a_key_not_published_in_the_resolved_did_document_fails(
     wrong_key = Ed25519PrivateKey.generate()
     _, resolve_did_document = world()
     document = sign({"issuer": DID, "value": "hello"}, KID, wrong_key)
+    assert await verify_eddsa_jcs_2022(document, resolve_did_document) is False
+
+
+# Regression: this verifier used to accept any key in verification_method, never checking that
+# the key is actually listed under assertion_method (W3C Controlled Identifiers v1.0 §3.3). A
+# key published only under authentication - a login/session key, not one authorized to make
+# assertions - used to verify here; it must not.
+async def test_a_key_listed_only_under_authentication_not_assertion_method_fails():
+    private_key = Ed25519PrivateKey.generate()
+    public_key_bytes = private_key.public_key().public_bytes_raw()
+    public_key_jwk = {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": base64.urlsafe_b64encode(public_key_bytes).rstrip(b"=").decode("ascii"),
+    }
+
+    async def resolve_did_document(did):
+        if did != DID:
+            return None
+        return MinimalDidDocument(
+            id=DID,
+            verification_method=(
+                MinimalVerificationMethod(id=KID, type="JsonWebKey2020", controller=DID, public_key_jwk=public_key_jwk),
+            ),
+            assertion_method=(),  # explicitly NOT listed here
+        )
+
+    document = sign({"issuer": DID, "value": "hello"}, KID, private_key)
+    assert await verify_eddsa_jcs_2022(document, resolve_did_document) is False
+
+
+async def test_a_key_whose_controller_is_a_different_did_fails_even_if_listed_under_assertion_method():
+    private_key = Ed25519PrivateKey.generate()
+    public_key_bytes = private_key.public_key().public_bytes_raw()
+    public_key_jwk = {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": base64.urlsafe_b64encode(public_key_bytes).rstrip(b"=").decode("ascii"),
+    }
+
+    async def resolve_did_document(did):
+        if did != DID:
+            return None
+        return MinimalDidDocument(
+            id=DID,
+            verification_method=(
+                MinimalVerificationMethod(
+                    id=KID,
+                    type="JsonWebKey2020",
+                    controller="did:web:someone-else.example",
+                    public_key_jwk=public_key_jwk,
+                ),
+            ),
+            assertion_method=(KID,),
+        )
+
+    document = sign({"issuer": DID, "value": "hello"}, KID, private_key)
+    assert await verify_eddsa_jcs_2022(document, resolve_did_document) is False
+
+
+async def test_a_document_with_no_assertion_method_at_all_fails_even_with_a_matching_verification_method():
+    private_key = Ed25519PrivateKey.generate()
+    public_key_bytes = private_key.public_key().public_bytes_raw()
+    public_key_jwk = {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": base64.urlsafe_b64encode(public_key_bytes).rstrip(b"=").decode("ascii"),
+    }
+
+    async def resolve_did_document(did):
+        if did != DID:
+            return None
+        return MinimalDidDocument(
+            id=DID,
+            verification_method=(
+                MinimalVerificationMethod(id=KID, type="JsonWebKey2020", controller=DID, public_key_jwk=public_key_jwk),
+            ),
+        )
+
+    document = sign({"issuer": DID, "value": "hello"}, KID, private_key)
     assert await verify_eddsa_jcs_2022(document, resolve_did_document) is False

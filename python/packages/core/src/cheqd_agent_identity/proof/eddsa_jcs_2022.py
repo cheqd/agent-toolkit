@@ -16,7 +16,10 @@ import rfc8785
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from cheqd_agent_identity.agent_card.retrieve_public_key import MinimalDidDocument, key_from_document
+from cheqd_agent_identity.agent_card.retrieve_public_key import (
+    MinimalDidDocument,
+    assertion_method_key_from_document,
+)
 
 MAX_PROOF_VALUE_BASE58_LEN = 100
 BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -98,7 +101,13 @@ async def verify_eddsa_jcs_2022(document: Any, resolve_did_document: ResolveDidD
         if did_document is None:
             return False
         try:
-            jwk = key_from_document(did_document, verification_method)
+            # MUST be a key the document's own assertionMethod relationship publishes, with a
+            # controller equal to the issuer - checking proof.proofPurpose == "assertionMethod"
+            # above says what the PROOF claims; it says nothing about whether the key the proof
+            # names is actually authorized to make that claim. A key listed only under
+            # verification_method (or another relationship such as authentication) MUST NOT
+            # verify here, even though it would resolve via the generic Agent Card key lookup.
+            jwk = assertion_method_key_from_document(did_document, verification_method)
         except Exception:
             return False
         if jwk.get("kty") != "OKP" or jwk.get("crv") != "Ed25519":

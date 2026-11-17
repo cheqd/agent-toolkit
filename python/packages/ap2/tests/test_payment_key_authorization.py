@@ -105,8 +105,11 @@ def deps_for(
         return MinimalDidDocument(
             id=PRIMARY_DID,
             verification_method=(
-                MinimalVerificationMethod(id=PRIMARY_KID, public_key_jwk=primary_public_key_jwk),
+                MinimalVerificationMethod(
+                    id=PRIMARY_KID, type="JsonWebKey2020", controller=PRIMARY_DID, public_key_jwk=primary_public_key_jwk
+                ),
             ),
+            assertion_method=(PRIMARY_KID,),
         )
 
     async def check_revoked(_credential):

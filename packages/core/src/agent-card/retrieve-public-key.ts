@@ -116,6 +116,39 @@ function methodId(method: MinimalVerificationMethod, did: string): string {
 	return method.id.startsWith('#') ? `${did}${method.id}` : method.id;
 }
 
+/**
+ * Resolves `kid` as a key the DID document's `assertionMethod` relationship actually publishes -
+ * not merely present somewhere in `verificationMethod` - per W3C Controlled Identifiers v1.0
+ * §3.3 step 8 (a retrieved method must have a non-empty `id`, `type` and `controller`) and step
+ * 10 (`controller` must be the DID). A key listed only under `verificationMethod`, or under
+ * another relationship such as `authentication`, does not resolve here, even if it resolves via
+ * {@link keyFromDocument}. Use this, never `keyFromDocument`, wherever a proof's own stated
+ * purpose is `assertionMethod` (an assertion by the DID's subject, e.g. a status list or a
+ * payment-key credential) - `keyFromDocument` remains correct for this module's own Agent Card
+ * key resolution, which has no such relationship requirement to begin with.
+ */
+export function assertionMethodKeyFromDocument(document: MinimalDidDocument, kid: string): PublicKeyJwk {
+	const relationship = document.assertionMethod ?? [];
+	const matched = relationship.find((entry) =>
+		typeof entry === 'string' ? (entry.startsWith('#') ? `${document.id}${entry}` : entry) === kid : methodId(entry, document.id) === kid,
+	);
+	if (!matched) fail('kid_not_in_assertion_method');
+	// A string entry names a method the document must also publish under verificationMethod; an
+	// embedded entry carries its own fields directly and needs no further lookup.
+	const method = typeof matched === 'string' ? (document.verificationMethod ?? []).find((candidate) => methodId(candidate, document.id) === kid) : matched;
+	if (!method) fail('kid_not_in_document');
+	if (!method.type || !method.controller) fail('malformed_verification_method');
+	if (method.controller !== document.id) fail('controller_mismatch');
+	if (method.publicKeyJwk) {
+		const jwk = method.publicKeyJwk;
+		if (typeof jwk.kty !== 'string') fail('malformed_public_key_jwk');
+		return jwk as PublicKeyJwk;
+	}
+	if (method.publicKeyMultibase) return jwkFromEd25519Multibase(method.publicKeyMultibase);
+	if (method.publicKeyBase58) return jwkFromEd25519Base58(method.publicKeyBase58);
+	fail('unsupported_key_encoding');
+}
+
 async function resolveDidWeb(
 	did: string,
 	kid: string,

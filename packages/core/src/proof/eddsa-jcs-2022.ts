@@ -13,7 +13,7 @@
 import { createHash } from 'node:crypto';
 import { verify as cryptoVerify, createPublicKey } from 'node:crypto';
 import { canonicalize } from 'json-canonicalize';
-import { keyFromDocument, type MinimalDidDocument } from '../agent-card/retrieve-public-key.js';
+import { assertionMethodKeyFromDocument, type MinimalDidDocument } from '../agent-card/retrieve-public-key.js';
 
 const MAX_PROOF_VALUE_BASE58_LEN = 100;
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -80,7 +80,13 @@ export async function verifyEddsaJcs2022(document: unknown, resolveDidDocument: 
 		if (!didDocument) return false;
 		let jwk: Record<string, unknown>;
 		try {
-			jwk = keyFromDocument(didDocument, verificationMethod);
+			// MUST be a key the document's own assertionMethod relationship publishes, with a
+			// controller equal to the issuer - checking proof.proofPurpose === 'assertionMethod'
+			// above says what the PROOF claims; it says nothing about whether the key the
+			// proof names is actually authorized to make that claim. A key listed only under
+			// verificationMethod (or another relationship such as authentication) MUST NOT
+			// verify here, even though it would resolve via the generic Agent Card key lookup.
+			jwk = assertionMethodKeyFromDocument(didDocument, verificationMethod);
 		} catch {
 			return false;
 		}

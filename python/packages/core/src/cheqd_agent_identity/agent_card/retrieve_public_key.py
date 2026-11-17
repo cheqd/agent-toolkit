@@ -22,7 +22,7 @@ from __future__ import annotations
 import base64
 import urllib.parse
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Mapping, Optional, Protocol, Sequence
+from typing import Any, Awaitable, Callable, Mapping, Optional, Protocol, Sequence, Union
 
 import httpx
 
@@ -43,6 +43,10 @@ def _fail(reason: str) -> None:
 @dataclass(frozen=True)
 class MinimalVerificationMethod:
     id: str
+    # Required by @kya-os/mcp 1.23.0+'s assertionMethod lookup (W3C Controlled Identifiers v1.0
+    # §3.3 step 8: a retrieved method must have a non-empty id, type and controller) - not read
+    # by this module's own Agent Card key resolution.
+    type: Optional[str] = None
     controller: Optional[str] = None
     public_key_jwk: Optional[Mapping[str, Any]] = None
     public_key_multibase: Optional[str] = None
@@ -53,6 +57,9 @@ class MinimalVerificationMethod:
 class MinimalDidDocument:
     id: str
     verification_method: Sequence[MinimalVerificationMethod] = field(default_factory=tuple)
+    # Ids (or embedded methods) of keys this DID actually signs with. Not read by this module's
+    # own kid-based Agent Card key resolution.
+    assertion_method: Sequence[Union[str, MinimalVerificationMethod]] = field(default_factory=tuple)
 
 
 class DidWebResponse(Protocol):
@@ -127,6 +134,51 @@ def key_from_document(document: MinimalDidDocument, kid: str) -> PublicKeyJwk:
     _fail("unsupported_key_encoding")
 
 
+def assertion_method_key_from_document(document: MinimalDidDocument, kid: str) -> PublicKeyJwk:
+    """Resolves `kid` as a key the DID document's `assertionMethod` relationship actually
+    publishes - not merely present somewhere in `verification_method` - per W3C Controlled
+    Identifiers v1.0 §3.3 step 8 (a retrieved method must have a non-empty `id`, `type` and
+    `controller`) and step 10 (`controller` must be the DID). A key listed only under
+    `verification_method`, or under another relationship such as `authentication`, does not
+    resolve here, even if it resolves via :func:`key_from_document`. Use this, never
+    `key_from_document`, wherever a proof's own stated purpose is `assertionMethod` (an
+    assertion by the DID's subject, e.g. a status list or a payment-key credential) -
+    `key_from_document` remains correct for this module's own Agent Card key resolution, which
+    has no such relationship requirement to begin with.
+    """
+
+    def _entry_id(entry: Union[str, MinimalVerificationMethod]) -> str:
+        if isinstance(entry, str):
+            return f"{document.id}{entry}" if entry.startswith("#") else entry
+        return _method_id(entry, document.id)
+
+    matched = next((entry for entry in document.assertion_method if _entry_id(entry) == kid), None)
+    if matched is None:
+        _fail("kid_not_in_assertion_method")
+    # A string entry names a method the document must also publish under verification_method;
+    # an embedded entry carries its own fields directly and needs no further lookup.
+    if isinstance(matched, str):
+        method = next((m for m in document.verification_method if _method_id(m, document.id) == kid), None)
+    else:
+        method = matched
+    if method is None:
+        _fail("kid_not_in_document")
+    if not method.type or not method.controller:
+        _fail("malformed_verification_method")
+    if method.controller != document.id:
+        _fail("controller_mismatch")
+    if method.public_key_jwk:
+        jwk = dict(method.public_key_jwk)
+        if not isinstance(jwk.get("kty"), str):
+            _fail("malformed_public_key_jwk")
+        return jwk
+    if method.public_key_multibase:
+        return _jwk_from_ed25519_multibase(method.public_key_multibase)
+    if method.public_key_base58:
+        return _jwk_from_ed25519_base58(method.public_key_base58)
+    _fail("unsupported_key_encoding")
+
+
 def _method_id(method: MinimalVerificationMethod, did: str) -> str:
     return f"{did}{method.id}" if method.id.startswith("#") else method.id
 
@@ -181,13 +233,36 @@ def _parse_minimal_did_document(value: Any) -> Optional[MinimalDidDocument]:
         methods.append(
             MinimalVerificationMethod(
                 id=raw["id"],
+                type=raw.get("type"),
                 controller=raw.get("controller"),
                 public_key_jwk=raw.get("publicKeyJwk"),
                 public_key_multibase=raw.get("publicKeyMultibase"),
                 public_key_base58=raw.get("publicKeyBase58"),
             )
         )
-    return MinimalDidDocument(id=value["id"], verification_method=tuple(methods))
+    raw_assertion_method = value.get("assertionMethod")
+    if raw_assertion_method is not None and not isinstance(raw_assertion_method, list):
+        return None
+    assertion_method: list[Union[str, MinimalVerificationMethod]] = []
+    for raw in raw_assertion_method or []:
+        if isinstance(raw, str):
+            assertion_method.append(raw)
+        elif isinstance(raw, dict) and isinstance(raw.get("id"), str):
+            assertion_method.append(
+                MinimalVerificationMethod(
+                    id=raw["id"],
+                    type=raw.get("type"),
+                    controller=raw.get("controller"),
+                    public_key_jwk=raw.get("publicKeyJwk"),
+                    public_key_multibase=raw.get("publicKeyMultibase"),
+                    public_key_base58=raw.get("publicKeyBase58"),
+                )
+            )
+        else:
+            return None
+    return MinimalDidDocument(
+        id=value["id"], verification_method=tuple(methods), assertion_method=tuple(assertion_method)
+    )
 
 
 def _resolve_did_key(did: str, kid: str) -> PublicKeyJwk:
