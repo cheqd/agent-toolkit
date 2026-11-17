@@ -103,7 +103,12 @@ async function verify() {
 		consumeNonceIfFresh: nonceCache.consume,
 	});
 
-	const user = await userBuilder({ body: { method: 'SendMessage', params: wire } });
+	// `route: { path: '/' }` is what Express actually sets on `req.route.path` for
+	// `jsonRpcHandler`'s single registered route - this script calls the userBuilder directly,
+	// bypassing Express entirely, so it must supply what Express would have set itself (see
+	// `user-builder.ts`'s `methodAndParamsFor`: with no route info at all, it now fails closed
+	// rather than guessing, correctly rejecting this otherwise-legitimate call).
+	const user = await userBuilder({ body: { method: 'SendMessage', params: wire }, route: { path: '/' } });
 	if (!user.isAuthenticated || !user.verified) {
 		process.stderr.write(JSON.stringify({ ok: false, rejection: user.rejection }));
 		process.exit(1);
