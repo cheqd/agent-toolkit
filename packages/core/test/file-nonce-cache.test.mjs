@@ -110,7 +110,9 @@ test('cleanup() does not delete a malformed record', () =>
 test('concurrent consume() calls for the same nonce: exactly one succeeds', () =>
 	withTempDir(async (dir) => {
 		const cache = new FileNonceCacheProvider({ directory: dir });
-		const results = await Promise.all(Array.from({ length: 20 }, () => cache.consume('n1', 60, 'did:example:a')));
+		const results = await Promise.all(
+			Array.from({ length: 20 }, () => cache.consume('n1', 60, 'did:example:a')),
+		);
 		assert.equal(results.filter(Boolean).length, 1);
 	}));
 
@@ -133,13 +135,91 @@ test('concurrent reclaims of the SAME expired nonce: never more than one succeed
 		for (let round = 0; round < 50; round++) {
 			assert.equal(await cache.consume(`n-round-${round}`, 1, 'did:example:a'), true); // expires at clock+1000
 			clock += 2000; // now expired
-			const results = await Promise.all(Array.from({ length: 8 }, () => cache.consume(`n-round-${round}`, 60, 'did:example:a')));
+			const results = await Promise.all(
+				Array.from({ length: 8 }, () => cache.consume(`n-round-${round}`, 60, 'did:example:a')),
+			);
 			assert.equal(
 				results.filter(Boolean).length,
 				1,
 				`round ${round}: exactly one concurrent reclaim of the same expired nonce must succeed, got ${results.filter(Boolean).length}`,
 			);
 		}
+	}));
+
+// Regression: the per-key `queues` map (added by the reclaim-race fix above) used to grow
+// without bound - every distinct (agentDid, nonce) key added an entry that was never removed,
+// even after that key's consume() call had fully completed and nothing was waiting on it. An
+// attacker sending distinct nonces could grow this process-lifetime map arbitrarily. Asserts
+// directly on the map (a plain TS `private` field, not a real runtime-private `#` field, so it
+// is readable from a compiled-JS test) since there is no public API that reports its size.
+test("consume()'s per-key queue entry is pruned once its chain settles, not retained forever", () =>
+	withTempDir(async (dir) => {
+		const cache = new FileNonceCacheProvider({ directory: dir });
+		for (let i = 0; i < 2000; i++) {
+			await cache.consume(`n-${i}`, 60, 'did:example:a');
+		}
+		assert.equal(
+			cache.queues.size,
+			0,
+			`expected the queues map to be pruned back to empty, got ${cache.queues.size} entries`,
+		);
+	}));
+
+test('a burst of concurrent distinct-key consume() calls still prunes the queues map down to empty once all settle', () =>
+	withTempDir(async (dir) => {
+		const cache = new FileNonceCacheProvider({ directory: dir });
+		await Promise.all(Array.from({ length: 500 }, (_, i) => cache.consume(`n-${i}`, 60, 'did:example:a')));
+		assert.equal(
+			cache.queues.size,
+			0,
+			`expected the queues map to be pruned back to empty, got ${cache.queues.size} entries`,
+		);
+	}));
+
+// Regression: cleanup() used to read a record and decide to delete it with no serialization
+// against a concurrent consume() reclaiming that same (now-expired) nonce. If consume() wins the
+// race and writes a fresh, live record between cleanup()'s read and its rm(), cleanup() deletes
+// that fresh record - the nonce then looks unconsumed again well within its new TTL. This is a
+// genuinely timing-dependent race (not deterministic every round), so it is run over many rounds,
+// matching the style of the existing reclaim-race regression test above.
+test('cleanup() racing a concurrent reclaim of the same expired nonce never deletes the fresh record', () =>
+	withTempDir(async (dir) => {
+		let clock = 0;
+		const cache = new FileNonceCacheProvider({ directory: dir, now: () => clock });
+		let reclaimsObserved = 0;
+		for (let round = 0; round < 200; round++) {
+			const nonce = `n-round-${round}`;
+			assert.equal(await cache.consume(nonce, 1, 'did:example:a'), true); // expires at clock+1000
+			clock += 2000; // now expired
+			// Several concurrent cleanup() calls plus the reclaim: more fs-operation interleaving
+			// opportunities than a single cleanup() vs. a single consume(), which widens the window
+			// for cleanup()'s unserialized read-then-rm to land between the reclaim's rename and its
+			// fresh create.
+			const [, , , reclaimed] = await Promise.all([
+				cache.cleanup(),
+				cache.cleanup(),
+				cache.cleanup(),
+				cache.consume(nonce, 60, 'did:example:a'),
+			]);
+			// A concurrent cleanup() can (pre-fix) also make the reclaim itself spuriously fail -
+			// e.g. by rm()ing the record out from under the reclaim's own rename() - a related
+			// symptom of the same missing-serialization bug but not the one this test targets. Only
+			// when OUR reclaim actually won do we check the specific invariant from the finding: a
+			// reclaim that just won must not have its brand-new, still-live record deleted by one of
+			// the racing cleanup() calls.
+			if (reclaimed) {
+				reclaimsObserved++;
+				assert.equal(
+					await cache.has(nonce, 'did:example:a'),
+					true,
+					`round ${round}: cleanup() must not have deleted the freshly-reclaimed, still-live record`,
+				);
+			}
+		}
+		assert.ok(
+			reclaimsObserved > 0,
+			"no round's reclaim won outright - the test didn't exercise the scenario it targets",
+		);
 	}));
 
 test('destroy() resolves without throwing', () =>

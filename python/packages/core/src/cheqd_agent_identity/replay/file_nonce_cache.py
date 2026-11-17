@@ -25,13 +25,30 @@ caller B's own (concurrently in-flight) `unlink()` for the same path could run a
 fresh record A just wrote - clearing the way for B's own `open()` to also succeed. The reclaim
 step below uses `os.rename()` to atomically claim the expired file (rather than deleting it)
 before creating the fresh record, as defense in depth for genuinely separate OS processes
-sharing this directory, which the in-process lock cannot help: `rename()` on the same source
-path is still atomic across processes, so at most one process's reclaim of a given expired file
-can win even without the lock. But `rename()` alone, without the lock, is not sufficient: it
-only checks that the source path exists, not that the thing at it is still the stale snapshot a
-caller examined - a second caller could still rename away a different caller's brand-new live
-record. The lock removes that exposure entirely for in-process callers, which is why both pieces
-are kept.
+sharing this directory, which the in-process lock cannot help. This is NOT a complete fix for
+that case, though: each individual `rename()` call is atomic (so two processes can't both rename
+away the SAME still-stale file), but that is weaker than full safety - a second caller could read
+"expired", and only THEN - after a different caller had already renamed the old file away and
+created its own fresh, live record at the same path - have its own `rename()` succeed, because
+`rename()` only checks that the source path exists, not that the thing at it is still the stale
+snapshot that caller examined. It would silently steal the other caller's brand-new live record.
+Cross-process reclaim is therefore still racy in principle; the lock only makes it race-free for
+callers sharing this one process, which is the scenario this module is actually meant to cover.
+
+`cleanup()` goes through the same per-key lock as `consume()`, for the same reason: without it,
+`cleanup()` could read a record, see it as expired, and then `unlink()` it AFTER a concurrent
+`consume()` had already reclaimed that same slot and written a fresh, live record there -
+deleting the fresh record and making the nonce look unconsumed again, well within its new TTL.
+Serializing each file's cleanup check-and-delete through the same lock a reclaim of that file
+would use closes this the same way the reclaim race itself is closed: by removing the
+"then-act" step's exposure, not by trying to make the individual read and the individual
+`unlink()` atomic as a pair.
+
+The `_locks` dict itself is pruned once a key has no current holder and no other coroutine
+waiting on it (see `_locked()`): nonces are unique by construction, so every distinct
+`(agent_did, nonce)` that has ever been consumed would otherwise add an entry that is never
+removed - a caller submitting enough distinct nonces could grow this process-lifetime dict
+without bound.
 
 SPDX-License-Identifier: Apache-2.0
 """
@@ -45,9 +62,10 @@ import math
 import os
 import secrets
 import time
-from dataclasses import dataclass
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import AsyncIterator, Callable, Optional
 
 from cheqd_agent_identity.replay.nonce_cache_provider import NonceCacheProvider
 
@@ -57,6 +75,16 @@ class _Record:
     expires_at: float
 
 
+@dataclass
+class _KeyedLock:
+    """An `asyncio.Lock` plus a count of coroutines currently holding or waiting on it, so the
+    owning dict entry can be pruned once that count drops back to zero - see `_locked()`.
+    """
+
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    waiters: int = 0
+
+
 class FileNonceCacheProvider(NonceCacheProvider):
     def __init__(self, *, directory: str | Path, now: Optional[Callable[[], float]] = None) -> None:
         self._directory = Path(directory)
@@ -64,9 +92,11 @@ class FileNonceCacheProvider(NonceCacheProvider):
         self._ready = False
         self._ready_lock = asyncio.Lock()
         # Per-(agent_did, nonce) in-process serialization for consume()'s read-reclaim-create
-        # sequence - see the module doc comment for why the whole body, not just the individual
-        # filesystem calls, must be serialized.
-        self._locks: dict[str, asyncio.Lock] = {}
+        # sequence, and for cleanup()'s per-record check-and-delete - see the module doc comment
+        # for why the whole body, not just the individual filesystem calls, must be serialized.
+        # Pruned by _locked() as each key's waiter count returns to zero, so this does not grow
+        # without bound.
+        self._locks: dict[str, _KeyedLock] = {}
 
     async def _ensure_directory(self) -> None:
         if self._ready:
@@ -77,12 +107,28 @@ class FileNonceCacheProvider(NonceCacheProvider):
             await asyncio.to_thread(self._directory.mkdir, parents=True, exist_ok=True)
             self._ready = True
 
-    def _lock_for(self, key: str) -> asyncio.Lock:
-        lock = self._locks.get(key)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._locks[key] = lock
-        return lock
+    @asynccontextmanager
+    async def _locked(self, key: str) -> AsyncIterator[None]:
+        # Register interest in this key BEFORE awaiting anything, so the increment and the dict
+        # lookup/insert are a single atomic (non-yielding) step from the event loop's point of
+        # view - no other coroutine can run between them and prune the entry out from under us.
+        entry = self._locks.get(key)
+        if entry is None:
+            entry = _KeyedLock()
+            self._locks[key] = entry
+        entry.waiters += 1
+        try:
+            async with entry.lock:
+                yield
+        finally:
+            entry.waiters -= 1
+            # Only prune if nobody else is currently holding or waiting on THIS entry, and the
+            # dict still points at exactly this entry (another coroutine already racing to
+            # register interest, per the comment above, would have found and reused it rather
+            # than creating a new one, so a replacement here would only happen if this entry was
+            # already pruned and recreated - in which case there is nothing of ours left to prune).
+            if entry.waiters == 0 and self._locks.get(key) is entry:
+                del self._locks[key]
 
     def _path_for(self, nonce: str, agent_did: Optional[str] = None) -> Path:
         # Hash rather than use the nonce/DID directly as a filename: both are attacker-
@@ -93,7 +139,7 @@ class FileNonceCacheProvider(NonceCacheProvider):
     async def consume(self, nonce: str, ttl_seconds: int, agent_did: Optional[str] = None) -> bool:
         await self._ensure_directory()
         path = self._path_for(nonce, agent_did)
-        async with self._lock_for(str(path)):
+        async with self._locked(str(path)):
             record = _Record(expires_at=self._now() + ttl_seconds * 1000)
             if await asyncio.to_thread(self._try_create, path, record):
                 return True
@@ -154,10 +200,17 @@ class FileNonceCacheProvider(NonceCacheProvider):
         """Deletes every entry PROVEN expired. A record that cannot be parsed is left in place
         rather than deleted: deleting it would make the nonce look unconsumed again, reopening a
         replay window to save a few bytes of disk - the wrong trade.
+
+        Each file's check-and-delete is routed through the same per-path lock `consume()` uses -
+        see the module doc comment - so a concurrent reclaim of that exact file can never land
+        between this method reading the (expired) record and deleting it.
         """
         await self._ensure_directory()
         entries = await asyncio.to_thread(list, self._directory.glob("*.json"))
-        for path in entries:
+        await asyncio.gather(*(self._cleanup_one(path) for path in entries))
+
+    async def _cleanup_one(self, path: Path) -> None:
+        async with self._locked(str(path)):
             record = await self._read_record(path)
             if record is not None and record.expires_at <= self._now():
                 await asyncio.to_thread(path.unlink, True)

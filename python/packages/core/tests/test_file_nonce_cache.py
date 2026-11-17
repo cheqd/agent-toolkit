@@ -114,6 +114,68 @@ async def test_concurrent_reclaims_of_the_same_expired_nonce_never_more_than_one
         )
 
 
+# Regression: the per-key `_locks` dict (added by the reclaim-race fix above) used to grow
+# without bound - every distinct (agent_did, nonce) key added an entry that was never removed,
+# even after that key's consume() call had fully completed and nothing was waiting on it. An
+# attacker sending distinct nonces could grow this process-lifetime dict arbitrarily. Asserts
+# directly on the dict (a single-underscore attribute, not name-mangled, so it is readable from
+# a test) since there is no public API that reports its size.
+async def test_consume_per_key_lock_entry_is_pruned_once_released_not_retained_forever(tmp_path):
+    cache = FileNonceCacheProvider(directory=tmp_path)
+    for i in range(2000):
+        await cache.consume(f"n-{i}", 60, "did:example:a")
+    assert len(cache._locks) == 0, (
+        f"expected the locks dict to be pruned back to empty, got {len(cache._locks)} entries"
+    )
+
+
+async def test_burst_of_concurrent_distinct_key_consume_calls_still_prunes_locks_dict_to_empty(tmp_path):
+    cache = FileNonceCacheProvider(directory=tmp_path)
+    await asyncio.gather(*(cache.consume(f"n-{i}", 60, "did:example:a") for i in range(500)))
+    assert len(cache._locks) == 0, (
+        f"expected the locks dict to be pruned back to empty, got {len(cache._locks)} entries"
+    )
+
+
+# Regression: cleanup() used to read a record and decide to delete it with no serialization
+# against a concurrent consume() reclaiming that same (now-expired) nonce. If consume() wins the
+# race and writes a fresh, live record between cleanup()'s read and its unlink(), cleanup()
+# deletes that fresh record - the nonce then looks unconsumed again well within its new TTL. This
+# is a genuinely timing-dependent race (not deterministic every round), so it is run over many
+# rounds with extra concurrent cleanup() calls to widen the interleaving window, matching the
+# style of the existing reclaim-race regression test above.
+async def test_cleanup_racing_a_concurrent_reclaim_of_the_same_expired_nonce_never_deletes_the_fresh_record(
+    tmp_path,
+):
+    clock = {"value": 0.0}
+    cache = FileNonceCacheProvider(directory=tmp_path, now=lambda: clock["value"])
+    reclaims_observed = 0
+    for round_ in range(200):
+        nonce = f"n-round-{round_}"
+        assert await cache.consume(nonce, 1, "did:example:a") is True  # expires at clock+1000
+        clock["value"] += 2000  # now expired
+        _, _, _, reclaimed = await asyncio.gather(
+            cache.cleanup(),
+            cache.cleanup(),
+            cache.cleanup(),
+            cache.consume(nonce, 60, "did:example:a"),
+        )
+        # A concurrent cleanup() can (pre-fix) also make the reclaim itself spuriously fail - e.g.
+        # by unlinking the record out from under the reclaim's own rename() - which is a related
+        # symptom of the same missing-serialization bug but not the one this test targets. Only
+        # when OUR reclaim actually won do we check the specific invariant from the finding: a
+        # reclaim that just won must not have its brand-new, still-live record deleted by one of
+        # the racing cleanup() calls.
+        if reclaimed:
+            reclaims_observed += 1
+            assert await cache.has(nonce, "did:example:a") is True, (
+                f"round {round_}: cleanup() must not have deleted the freshly-reclaimed, still-live record"
+            )
+    assert reclaims_observed > 0, (
+        "no round's reclaim won outright - the test didn't exercise the scenario it targets"
+    )
+
+
 async def test_destroy_resolves_without_raising(tmp_path):
     cache = FileNonceCacheProvider(directory=tmp_path)
     await cache.destroy()
