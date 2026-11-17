@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # No TypeScript test file exists for covered-request.ts (it's exercised indirectly through the
 # gate tests that are not ported here - see docs/design-decisions.md D12). These tests check
-# its own documented contract directly: strip PROOF_META_KEY/LEGACY_PROOF_META_KEY and nothing
-# else, drop message.metadata entirely only if that empties it.
+# its own documented contract directly: strip PROOF_META_KEY and nothing else, drop
+# message.metadata entirely only if that empties it.
 from cheqd_agent_identity_a2a.covered_request import (
-    LEGACY_PROOF_META_KEY,
     PROOF_META_KEY,
     RESPONSE_PROOF_META_KEY,
     covered_request,
@@ -19,10 +18,19 @@ def test_strips_the_proof_key_from_message_metadata():
     assert covered.params["message"]["metadata"] == {"other": "keep-me"}
 
 
-def test_strips_the_legacy_proof_key_too():
-    wire_params = {"message": {"metadata": {LEGACY_PROOF_META_KEY: "sig"}}}
+# Regression: an earlier version ALSO stripped a second, "org.kya-os/proof@1", key from the
+# covered form as a "legacy mirror" of PROOF_META_KEY, even though nothing anywhere ever read
+# that key as a verification input. Excluding a metadata key from the signed/covered form without
+# anything verifying it is exactly how an attacker smuggles unsigned data into message.metadata
+# (and, since the gate never substitutes the covered form back into the request that actually
+# gets processed, into task history too) underneath an otherwise genuinely valid proof - the
+# proof's signature never covered that field, so an attacker can set or change it after the
+# proof was generated without invalidating it. That former legacy key must now be covered like
+# any other ordinary metadata: present in the covered form, unchanged.
+def test_does_not_strip_the_former_legacy_proof_key_it_is_ordinary_metadata_now():
+    wire_params = {"message": {"metadata": {"org.kya-os/proof@1": "attacker-controlled"}}}
     covered = covered_request("SendMessage", wire_params)
-    assert "metadata" not in covered.params["message"]
+    assert covered.params["message"]["metadata"] == {"org.kya-os/proof@1": "attacker-controlled"}
 
 
 def test_drops_metadata_entirely_once_emptied_by_stripping_the_proof_key():

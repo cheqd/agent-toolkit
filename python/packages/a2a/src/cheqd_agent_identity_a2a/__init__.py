@@ -21,7 +21,6 @@ from cheqd_agent_identity_a2a.client import (
     ResponseProofCheck,
 )
 from cheqd_agent_identity_a2a.covered_request import (
-    LEGACY_PROOF_META_KEY,
     PROOF_META_KEY,
     RESPONSE_PROOF_META_KEY,
     CoveredRequest,
@@ -98,7 +97,6 @@ __all__ = [
     "ProofInterceptorOptions",
     "ProofInterceptorState",
     "ResponseProofCheck",
-    "LEGACY_PROOF_META_KEY",
     "PROOF_META_KEY",
     "RESPONSE_PROOF_META_KEY",
     "CoveredRequest",
