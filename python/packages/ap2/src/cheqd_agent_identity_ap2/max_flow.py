@@ -15,6 +15,16 @@ from cheqd_agent_identity_ap2.types import LineItem, LineItemRequirements
 INF = 1e15
 
 
+def _is_valid_quantity(quantity: object) -> bool:
+    """A line-item quantity must be an integer (or an integer-valued float) >= 1. `bool` is
+    excluded even though it is a subclass of `int` in Python, since `True`/`False` are never a
+    legitimate quantity.
+    """
+    if isinstance(quantity, bool) or not isinstance(quantity, (int, float)):
+        return False
+    return float(quantity).is_integer() and quantity >= 1
+
+
 def evaluate_line_items_max_flow(
     checkout_items: list[LineItem], requirements: list[LineItemRequirements]
 ) -> list[str]:
@@ -24,31 +34,42 @@ def evaluate_line_items_max_flow(
     not-yet-full requirement slot left for it is. This is upstream's own semantics (preserved
     here rather than "fixed", even though it reads as a surprising property for a constraint
     named `line_items`). Returns violation messages, or an empty list if none.
+
+    Fail-closed validation, deliberately: `acceptable_items` is a selectively-disclosable array
+    in the upstream schema, and SD-JWT libraries drop undisclosed array elements - so a holder
+    who withholds every disclosure for a requirement's `acceptable_items` makes the verified
+    payload show `acceptable_items: []`, indistinguishable at this layer from an issuer-intended
+    "accepts anything". An empty array is therefore never treated as a wildcard here; it means
+    the requirement accepts nothing. Likewise, `quantity` and `item.id` are validated before
+    aggregation rather than summed naively, so a negative/zero/non-integer quantity (or a
+    non-string/empty id) can't net out a disallowed SKU or smuggle extra units past a
+    requirement's capacity.
     """
     cart_qty: dict[str, float] = {}
     for li in checkout_items:
         sku = li["item"]["id"]
-        cart_qty[sku] = cart_qty.get(sku, 0) + li["quantity"]
+        quantity = li["quantity"]
+        if not isinstance(sku, str) or len(sku) == 0:
+            return [f"Invalid line item: item.id must be a non-empty string, got {sku!r}"]
+        if not _is_valid_quantity(quantity):
+            return [f"Invalid line item: quantity for {sku} must be an integer >= 1, got {quantity!r}"]
+        cart_qty[sku] = cart_qty.get(sku, 0) + quantity
     sku_list = list(cart_qty.keys())
 
-    req_acceptable: list[set[str]] = [
-        {ai["id"] for ai in req["acceptable_items"]} if req["acceptable_items"] else set()
-        for req in requirements
-    ]
-    req_is_wildcard: list[bool] = [len(req["acceptable_items"]) == 0 for req in requirements]
+    # Empty acceptable_items means "accepts nothing", never a wildcard - see the fail-closed note
+    # in this function's docstring above.
+    req_acceptable: list[set[str]] = [{ai["id"] for ai in req["acceptable_items"]} for req in requirements]
 
     violations: list[str] = []
 
-    has_wildcard = any(req_is_wildcard)
     all_acceptable: set[str] = set()
-    if not has_wildcard:
-        for acc in req_acceptable:
-            all_acceptable |= acc
+    for acc in req_acceptable:
+        all_acceptable |= acc
 
     for sku, qty in cart_qty.items():
         if qty <= 0:
             continue
-        if not has_wildcard and sku not in all_acceptable:
+        if sku not in all_acceptable:
             violations.append(f"Item {sku} not in any requirement's acceptable items")
     if violations:
         return violations
@@ -66,7 +87,7 @@ def evaluate_line_items_max_flow(
         match_idx = -1
         is_complex = False
         for j in range(len(requirements)):
-            if req_is_wildcard[j] or sku in req_acceptable[j]:
+            if sku in req_acceptable[j]:
                 if match_idx == -1:
                     match_idx = j
                 else:
@@ -85,7 +106,7 @@ def evaluate_line_items_max_flow(
 
     if complex_sku_list:
         max_flow, residual = _line_items_max_flow(
-            complex_sku_list, cart_qty, requirements, req_acceptable, req_is_wildcard, req_remaining_capacity
+            complex_sku_list, cart_qty, requirements, req_acceptable, req_remaining_capacity
         )
         total_complex_cart = sum(cart_qty.get(sku, 0) for sku in complex_sku_list)
 
@@ -112,7 +133,6 @@ def _line_items_max_flow(
     cart_qty: dict[str, float],
     requirements: list[LineItemRequirements],
     req_acceptable: list[set[str]],
-    req_is_wildcard: list[bool],
     req_remaining_capacity: list[float],
 ) -> tuple[float, list[dict[int, float]]]:
     s_count = len(sku_list)
@@ -132,7 +152,7 @@ def _line_items_max_flow(
     for i in range(s_count):
         sku = sku_list[i]
         for j in range(len(requirements)):
-            if req_is_wildcard[j] or sku in req_acceptable[j]:
+            if sku in req_acceptable[j]:
                 u, v = sku_offset + i, req_offset + j
                 graph[u][v] = INF
                 graph[v][u] = 0
