@@ -106,7 +106,10 @@ def deps_for(
             id=PRIMARY_DID,
             verification_method=(
                 MinimalVerificationMethod(
-                    id=PRIMARY_KID, type="JsonWebKey2020", controller=PRIMARY_DID, public_key_jwk=primary_public_key_jwk
+                    id=PRIMARY_KID,
+                    type="JsonWebKey2020",
+                    controller=PRIMARY_DID,
+                    public_key_jwk=primary_public_key_jwk,
                 ),
             ),
             assertion_method=(PRIMARY_KID,),
