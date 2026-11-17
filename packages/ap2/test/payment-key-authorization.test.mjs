@@ -38,13 +38,14 @@ function signEddsaJcs2022(document, verificationMethod, privateKey) {
 	return { ...document, proof: { ...proofOptions, proofValue: `z${base58Encode(signature)}` } };
 }
 
-async function signedCredential({ primaryPublicKeyJwk, privateKey, paymentKeyJwk, validUntil }) {
+async function signedCredential({ primaryPublicKeyJwk, privateKey, paymentKeyJwk, validUntil, validFrom }) {
 	const unsigned = {
 		'@context': ['https://www.w3.org/ns/credentials/v2'],
 		type: ['VerifiableCredential', 'AgentPaymentKeyCredential'],
 		issuer: PRIMARY_DID,
 		issuanceDate: new Date().toISOString(),
 		...(validUntil ? { validUntil } : {}),
+		...(validFrom ? { validFrom } : {}),
 		credentialSubject: { id: PRIMARY_DID, paymentKeyJwk },
 		credentialStatus: { type: 'BitstringStatusListEntry', statusPurpose: 'revocation', statusListCredential: 'https://status.example/list', statusListIndex: '0' },
 	};
@@ -104,6 +105,44 @@ test('an expired payment key credential is rejected', async () => {
 	const { credential } = await signedCredential({ privateKey, paymentKeyJwk, validUntil: '2020-01-01T00:00:00Z' });
 	const result = await verifyAgentPaymentKeyCredential(credential, PRIMARY_DID, depsFor(primaryPublicKeyJwk));
 	assert.deepEqual(result, { ok: false, reason: 'credential_expired' });
+});
+
+// Regression (M3): Date.parse(validUntil) is NaN for an unparseable string, and every
+// comparison against NaN is false - so the old `Date.parse(validUntil) <= now()` check alone
+// failed OPEN (treated as not-yet-expired) for a malformed validUntil. Matches the fail-closed
+// convention established in packages/core/src/status/ledger-anchored.ts (PR #43).
+test('a validUntil that cannot be parsed is rejected, not treated as still valid', async () => {
+	const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+	const primaryPublicKeyJwk = { kty: 'OKP', crv: 'Ed25519', x: publicKey.export({ format: 'jwk' }).x };
+	const paymentKeyJwk = await exportJWK((await generateKeyPair('EdDSA', { crv: 'Ed25519' })).publicKey);
+
+	const { credential } = await signedCredential({ privateKey, paymentKeyJwk, validUntil: '31/12/2025' });
+	const result = await verifyAgentPaymentKeyCredential(credential, PRIMARY_DID, depsFor(primaryPublicKeyJwk));
+	assert.deepEqual(result, { ok: false, reason: 'credential_expired' });
+});
+
+// Regression: validFrom was never checked at all, so a credential wasn't yet valid (its
+// validity window hasn't started) still verified successfully.
+test('a credential whose validFrom is in the future is rejected as not yet valid', async () => {
+	const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+	const primaryPublicKeyJwk = { kty: 'OKP', crv: 'Ed25519', x: publicKey.export({ format: 'jwk' }).x };
+	const paymentKeyJwk = await exportJWK((await generateKeyPair('EdDSA', { crv: 'Ed25519' })).publicKey);
+
+	const { credential } = await signedCredential({ privateKey, paymentKeyJwk, validFrom: '2999-01-01T00:00:00Z' });
+	const result = await verifyAgentPaymentKeyCredential(credential, PRIMARY_DID, depsFor(primaryPublicKeyJwk));
+	assert.deepEqual(result, { ok: false, reason: 'credential_not_yet_valid' });
+});
+
+// Regression: a validFrom that cannot be parsed must fail closed too, matching M3's convention
+// for validUntil.
+test('a validFrom that cannot be parsed is rejected, not treated as already valid', async () => {
+	const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+	const primaryPublicKeyJwk = { kty: 'OKP', crv: 'Ed25519', x: publicKey.export({ format: 'jwk' }).x };
+	const paymentKeyJwk = await exportJWK((await generateKeyPair('EdDSA', { crv: 'Ed25519' })).publicKey);
+
+	const { credential } = await signedCredential({ privateKey, paymentKeyJwk, validFrom: '31/12/2025' });
+	const result = await verifyAgentPaymentKeyCredential(credential, PRIMARY_DID, depsFor(primaryPublicKeyJwk));
+	assert.deepEqual(result, { ok: false, reason: 'credential_not_yet_valid' });
 });
 
 test('a credential with no credentialStatus is rejected (fail closed, never optional)', async () => {
