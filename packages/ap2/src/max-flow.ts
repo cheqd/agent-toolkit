@@ -18,29 +18,43 @@ const INF = 1e15;
  * against `max_flow_helper.py`: `unassigned_items` is built only from leftover cart quantity),
  * preserved here rather than "fixed", even though it reads as a surprising property for a
  * constraint named `line_items`. Returns violation messages, or an empty array if none.
+ *
+ * Fail-closed validation, deliberately: `acceptable_items` is a selectively-disclosable array in
+ * the upstream schema, and SD-JWT libraries drop undisclosed array elements - so a holder who
+ * withholds every disclosure for a requirement's `acceptable_items` makes the verified payload
+ * show `acceptable_items: []`, indistinguishable at this layer from an issuer-intended "accepts
+ * anything". An empty array is therefore never treated as a wildcard here; it means the
+ * requirement accepts nothing. Likewise, `quantity` and `item.id` are validated before
+ * aggregation rather than summed naively, so a negative/zero/non-integer quantity (or a
+ * non-string/empty id) can't net out a disallowed SKU or smuggle extra units past a requirement's
+ * capacity.
  */
 export function evaluateLineItemsMaxFlow(checkoutItems: readonly LineItem[], requirements: readonly LineItemRequirements[]): string[] {
 	const cartQty = new Map<string, number>();
 	for (const li of checkoutItems) {
 		const sku = li.item.id;
+		if (typeof sku !== 'string' || sku.length === 0) {
+			return [`Invalid line item: item.id must be a non-empty string, got ${JSON.stringify(sku)}`];
+		}
+		if (typeof li.quantity !== 'number' || !Number.isInteger(li.quantity) || li.quantity < 1) {
+			return [`Invalid line item: quantity for ${sku} must be an integer >= 1, got ${JSON.stringify(li.quantity)}`];
+		}
 		cartQty.set(sku, (cartQty.get(sku) ?? 0) + li.quantity);
 	}
 	const skuList = [...cartQty.keys()];
 
-	const reqAcceptable: Set<string>[] = requirements.map((req) => (req.acceptable_items.length > 0 ? new Set(req.acceptable_items.map((ai) => ai.id)) : new Set<string>()));
-	const reqIsWildcard: boolean[] = requirements.map((req) => req.acceptable_items.length === 0);
+	// Empty acceptable_items means "accepts nothing", never a wildcard - see the fail-closed note
+	// in the function docstring above.
+	const reqAcceptable: Set<string>[] = requirements.map((req) => new Set(req.acceptable_items.map((ai) => ai.id)));
 
 	const violations: string[] = [];
 
-	const hasWildcard = reqIsWildcard.some(Boolean);
 	const allAcceptable = new Set<string>();
-	if (!hasWildcard) {
-		for (const acc of reqAcceptable) for (const id of acc) allAcceptable.add(id);
-	}
+	for (const acc of reqAcceptable) for (const id of acc) allAcceptable.add(id);
 
 	for (const [sku, qty] of cartQty) {
 		if (qty <= 0) continue;
-		if (!hasWildcard && !allAcceptable.has(sku)) violations.push(`Item ${sku} not in any requirement's acceptable items`);
+		if (!allAcceptable.has(sku)) violations.push(`Item ${sku} not in any requirement's acceptable items`);
 	}
 	if (violations.length > 0) return violations;
 
@@ -56,7 +70,7 @@ export function evaluateLineItemsMaxFlow(checkoutItems: readonly LineItem[], req
 		let matchIdx = -1;
 		let isComplex = false;
 		for (let j = 0; j < requirements.length; j++) {
-			if (reqIsWildcard[j] || reqAcceptable[j]?.has(sku)) {
+			if (reqAcceptable[j]?.has(sku)) {
 				if (matchIdx === -1) matchIdx = j;
 				else {
 					isComplex = true;
@@ -77,7 +91,7 @@ export function evaluateLineItemsMaxFlow(checkoutItems: readonly LineItem[], req
 	}
 
 	if (complexSkuList.length > 0) {
-		const { maxFlow, residual } = lineItemsMaxFlow(complexSkuList, cartQty, requirements, reqAcceptable, reqIsWildcard, reqRemainingCapacity);
+		const { maxFlow, residual } = lineItemsMaxFlow(complexSkuList, cartQty, requirements, reqAcceptable, reqRemainingCapacity);
 		const totalComplexCart = complexSkuList.reduce((sum, sku) => sum + (cartQty.get(sku) ?? 0), 0);
 
 		if (maxFlow < totalComplexCart) {
@@ -103,7 +117,6 @@ function lineItemsMaxFlow(
 	cartQty: Map<string, number>,
 	requirements: readonly LineItemRequirements[],
 	reqAcceptable: readonly Set<string>[],
-	reqIsWildcard: readonly boolean[],
 	reqRemainingCapacity: readonly number[],
 ): { maxFlow: number; residual: Map<number, number>[] } {
 	const sCount = skuList.length;
@@ -125,7 +138,7 @@ function lineItemsMaxFlow(
 	for (let i = 0; i < sCount; i++) {
 		const sku = skuList[i] ?? '';
 		for (let j = 0; j < requirements.length; j++) {
-			if (reqIsWildcard[j] || reqAcceptable[j]?.has(sku)) {
+			if (reqAcceptable[j]?.has(sku)) {
 				const u = skuOffset + i;
 				const v = reqOffset + j;
 				graph[u]?.set(v, INF);

@@ -157,11 +157,19 @@ def test_checkout_allowed_merchants_merchant_not_allowed_fails():
     assert any("not in allowed list" in v for v in violations)
 
 
-def test_checkout_line_items_wildcard_requirement_satisfied_by_any_item():
+def test_checkout_line_items_requirement_satisfied_by_an_explicitly_acceptable_item():
+    # Regression (#55): acceptable_items: [] used to mean "any item accepted" (a wildcard) - it
+    # now means "nothing is accepted" (fail closed), so this requirement must name the item it
+    # accepts explicitly rather than relying on an empty list.
     open_ = {
         "vct": "mandate.checkout.open.1",
         "constraints": [
-            {"type": "checkout.line_items", "items": [{"id": "req1", "acceptable_items": [], "quantity": 1}]}
+            {
+                "type": "checkout.line_items",
+                "items": [
+                    {"id": "req1", "acceptable_items": [{"id": "sku-1", "title": "Shoe"}], "quantity": 1}
+                ],
+            }
         ],
         "cnf": {"jwk": {}},
     }
