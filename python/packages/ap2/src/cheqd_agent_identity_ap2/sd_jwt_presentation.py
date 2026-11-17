@@ -158,7 +158,8 @@ async def _verify_open_mandate(
     if kb_payload.get("aud") != expected_audience:
         raise ValueError("key_binding_audience_mismatch")
     kb_iat = kb_payload.get("iat")
-    if kb_iat is not None and abs(now - kb_iat) > skew_seconds:
+    if kb_iat is None or abs(now - kb_iat) > skew_seconds:
+        # Fail closed rather than skip the freshness check when `iat` is absent entirely.
         raise ValueError("key_binding_stale")
 
     transaction_data = kb_payload.get("transaction_data")
