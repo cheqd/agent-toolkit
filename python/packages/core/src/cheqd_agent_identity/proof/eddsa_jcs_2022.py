@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
 import rfc8785
@@ -65,12 +67,46 @@ def _contexts(value: Any) -> list[Any]:
     return [] if value is None else [value]
 
 
-async def verify_eddsa_jcs_2022(document: Any, resolve_did_document: ResolveDidDocument) -> bool:
+def _parse_date_ms(value: Any) -> Optional[float]:
+    """Epoch milliseconds, or `None` if `value` is not a parseable date string. `None` must be
+    treated by callers as INVALID, never as "not yet expired"/"not in the future" - see the
+    class of bug PR #43 fixed in `ledger_anchored.py`'s `validUntil` handling, which this module
+    follows for the same reason.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True)
+class VerifyEddsaJcs2022Options:
+    """Injectable clock returning epoch milliseconds (deterministic tests; default
+    `datetime.now(timezone.utc)`). Used to validate `proof.expires`/`proof.created` when either
+    is present.
+    """
+
+    now: Callable[[], float] = field(default=lambda: datetime.now(timezone.utc).timestamp() * 1000)
+
+
+async def verify_eddsa_jcs_2022(
+    document: Any,
+    resolve_did_document: ResolveDidDocument,
+    options: Optional[VerifyEddsaJcs2022Options] = None,
+) -> bool:
     """Verify `document`'s `DataIntegrityProof`/`eddsa-jcs-2022` proof. `resolve_did_document`
     resolves the DID the proof's `verificationMethod` names - the caller decides which
     resolver(s) to trust. Fails closed: any malformed, mismatched or unverifiable input returns
     `False`, never raises past this boundary.
+
+    `proof.expires`/`proof.created` are optional on the underlying data model and are validated
+    only when present, against `options.now()`: an `expires` at or before now, or a `created`
+    after now, fails - as does either field being present but not a parseable date string. An
+    unparseable value fails CLOSED (treated as invalid), never open.
     """
+    now = (options or VerifyEddsaJcs2022Options()).now
     try:
         if not isinstance(document, dict):
             return False
@@ -88,6 +124,17 @@ async def verify_eddsa_jcs_2022(document: Any, resolve_did_document: ResolveDidD
         if not isinstance(verification_method, str):
             return False
 
+        expires = proof.get("expires")
+        if expires is not None:
+            expires_at = _parse_date_ms(expires)
+            if expires_at is None or expires_at <= now():
+                return False
+        created = proof.get("created")
+        if created is not None:
+            created_at = _parse_date_ms(created)
+            if created_at is None or created_at > now():
+                return False
+
         issuer = _issuer_of(document)
         did = verification_method.split("#")[0]
         if issuer is None or did != issuer:
@@ -99,6 +146,15 @@ async def verify_eddsa_jcs_2022(document: Any, resolve_did_document: ResolveDidD
 
         did_document = await resolve_did_document(did)
         if did_document is None:
+            return False
+        # The injected resolver decides which DID(s) it trusts and how it resolves them, but
+        # nothing about this module's own correctness may depend on it having already enforced
+        # that the document it returns actually belongs to the DID it was asked to resolve. A lax
+        # or buggy resolver (e.g. a simple in-memory map used in tests) could return a document
+        # for a DIFFERENT DID than `did`, whose absolute-id assertion_method entries would
+        # otherwise incorrectly pass `assertion_method_key_from_document`'s own
+        # controller == document.id check.
+        if did_document.id != did:
             return False
         try:
             # MUST be a key the document's own assertionMethod relationship publishes, with a

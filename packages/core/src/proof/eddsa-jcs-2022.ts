@@ -13,7 +13,10 @@
 import { createHash } from 'node:crypto';
 import { verify as cryptoVerify, createPublicKey } from 'node:crypto';
 import { canonicalize } from 'json-canonicalize';
-import { assertionMethodKeyFromDocument, type MinimalDidDocument } from '../agent-card/retrieve-public-key.js';
+import {
+	assertionMethodKeyFromDocument,
+	type MinimalDidDocument,
+} from '../agent-card/retrieve-public-key.js';
 
 const MAX_PROOF_VALUE_BASE58_LEN = 100;
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -51,13 +54,31 @@ function contexts(value: unknown): unknown[] {
 	return value === undefined ? [] : [value];
 }
 
+export interface VerifyEddsaJcs2022Options {
+	/** Injectable clock returning epoch milliseconds (deterministic tests; default `Date.now`).
+	 * Used to validate `proof.expires`/`proof.created` when either is present. */
+	readonly now?: () => number;
+}
+
 /**
  * Verify `document`'s `DataIntegrityProof`/`eddsa-jcs-2022` proof. `resolveDidDocument` resolves
  * the DID the proof's `verificationMethod` names - the caller decides which resolver(s) to trust
  * (e.g. `createDidCheqdResolver`, or an in-memory map for `did:web`). Fails closed: any
  * malformed, mismatched or unverifiable input returns `false`, never throws past this boundary.
+ *
+ * `proof.expires`/`proof.created` are optional on the underlying data model and are validated
+ * only when present, against `options.now()`: an `expires` at or before now, or a `created` after
+ * now, fails - as does either field being present but not a parseable date string. An unparseable
+ * value fails CLOSED (treated as invalid), never open (treated as "not yet expired"/"not in the
+ * future") - `Date.parse()` of a malformed string is `NaN`, and every comparison against `NaN` is
+ * `false`, so a naive `Date.parse(x) <= now()` alone would silently accept it.
  */
-export async function verifyEddsaJcs2022(document: unknown, resolveDidDocument: (did: string) => Promise<MinimalDidDocument | null>): Promise<boolean> {
+export async function verifyEddsaJcs2022(
+	document: unknown,
+	resolveDidDocument: (did: string) => Promise<MinimalDidDocument | null>,
+	options: VerifyEddsaJcs2022Options = {},
+): Promise<boolean> {
+	const now = options.now ?? Date.now;
 	try {
 		if (!isRecord(document)) return false;
 		const proof = document['proof'];
@@ -69,6 +90,19 @@ export async function verifyEddsaJcs2022(document: unknown, resolveDidDocument: 
 		if (typeof proofValue !== 'string' || !proofValue.startsWith('z')) return false;
 		if (typeof verificationMethod !== 'string') return false;
 
+		const expires = proof['expires'];
+		if (expires !== undefined) {
+			if (typeof expires !== 'string') return false;
+			const expiresAt = Date.parse(expires);
+			if (Number.isNaN(expiresAt) || expiresAt <= now()) return false;
+		}
+		const created = proof['created'];
+		if (created !== undefined) {
+			if (typeof created !== 'string') return false;
+			const createdAt = Date.parse(created);
+			if (Number.isNaN(createdAt) || createdAt > now()) return false;
+		}
+
 		const issuer = issuerOf(document);
 		const did = verificationMethod.split('#')[0];
 		if (issuer === undefined || did !== issuer) return false;
@@ -78,6 +112,13 @@ export async function verifyEddsaJcs2022(document: unknown, resolveDidDocument: 
 
 		const didDocument = await resolveDidDocument(did);
 		if (!didDocument) return false;
+		// The injected resolver decides which DID(s) it trusts and how it resolves them, but
+		// nothing about this module's own correctness may depend on it having already enforced
+		// that the document it returns actually belongs to the DID it was asked to resolve. A lax
+		// or buggy resolver (e.g. a simple in-memory map used in tests) could return a document for
+		// a DIFFERENT DID than `did`, whose absolute-id assertionMethod entries would otherwise
+		// incorrectly pass `assertionMethodKeyFromDocument`'s own controller === document.id check.
+		if (didDocument.id !== did) return false;
 		let jwk: Record<string, unknown>;
 		try {
 			// MUST be a key the document's own assertionMethod relationship publishes, with a
