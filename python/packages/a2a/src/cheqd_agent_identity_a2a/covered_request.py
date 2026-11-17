@@ -1,6 +1,18 @@
 """The A2A canonical request shape - the one genuinely new piece of this binding.
-`request_hash` MUST be computed over `{method, params}` with the proof metadata key removed
-from `params.message.metadata`, and that key alone - nothing else stripped.
+`covered_request` (below) itself strips exactly one thing: `PROOF_META_KEY` from
+`params.message.metadata` (dropping `message.metadata` entirely if that empties it) - and that
+key alone, nothing else in `message.metadata`.
+
+`request_hash`, however, is NOT hashed directly from this function's output: `compute_request_hash`
+(`proof/canonical.py`, ported from `@kya-os/mcp`'s `card/proof/canonical.ts`) takes the covered
+form produced here and applies ONE MORE stripping step before canonicalizing - it also removes
+the top-level `params._meta` member, the MCP transport-metadata carrier (it carries the proof
+itself, so it can never be part of the signed material). That means `params._meta` is UNSIGNED,
+UNVERIFIED data end to end: nothing here or in `compute_request_hash` authenticates it, so
+whatever a sender puts there travels unchecked by this binding. It is harmless today only
+because the SDK's `fromJSON`/`ParseDict` already drop `_meta` before this code ever sees it -
+do not rely on that incidentally, and do not treat `params._meta` as verified input if that
+ever changes.
 
 Found by review: an earlier version also stripped a second, `"org.kya-os/proof@1"`, key from
 the covered form, as a "legacy mirror" of `PROOF_META_KEY`. Nothing in this codebase - not this

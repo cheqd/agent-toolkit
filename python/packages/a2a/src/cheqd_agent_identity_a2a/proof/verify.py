@@ -56,6 +56,16 @@ def _now_ms() -> float:
     return time.time() * 1000
 
 
+MAX_DEPENDENCY_TIMEOUT_MS = 2_147_483_647
+"""The longest `dependency_timeout_ms` a verifier takes, matching the TypeScript original's
+(`utils/deadline.ts`) `MAX_DEPENDENCY_TIMEOUT_MS` - 2**31 - 1 ms, about 24.8 days."""
+
+DEFAULT_DEPENDENCY_TIMEOUT_MS = 5_000
+"""The deadline given to each dependency (`resolve_key`, `resolve_did_keys`, the nonce cache)
+when `VerifyProofDeps.dependency_timeout_ms` is left unset - matching the TypeScript
+original's `OUTBOUND_READ_TIMEOUT_MS` default."""
+
+
 @dataclass(frozen=True)
 class VerifyProofDeps:
     resolve_key: ResolveKey
@@ -66,6 +76,71 @@ class VerifyProofDeps:
     consume_nonce_if_fresh: Optional[ConsumeNonceIfFresh] = None
     now: Callable[[], float] = _now_ms
     skew_sec: int = DEFAULT_SKEW_SEC
+    dependency_timeout_ms: Optional[float] = None
+    """The deadline (milliseconds) given to EACH dependency call this verifier makes -
+    `resolve_key`, `resolve_did_keys`, and the `consume_nonce_if_fresh` replay seam. A DID
+    resolver, a status-list/DID-web host, or a nonce store are code this module does not
+    control; one that never answers would otherwise hold a verification open indefinitely
+    (PR #42's fetch-level bounds in the core resolvers are not a substitute for this - a
+    verifier using a different resolver, or a nonce cache backed by a slow network store, is
+    not covered by them). `None` (default) uses `DEFAULT_DEPENDENCY_TIMEOUT_MS`. Matches the
+    TypeScript original's `VerifyProofDeps.dependencyTimeoutMs`
+    (`answerWithinDeadline`/`dependencyTimeout` in `utils/deadline.ts`)."""
+
+
+class DependencyTimeoutOptionError(TypeError):
+    """Raised when `dependency_timeout_ms` is not a number of milliseconds greater than 0 and
+    at most `MAX_DEPENDENCY_TIMEOUT_MS` - matching the TypeScript original's
+    `dependencyTimeout()`, which throws a `TypeError` naming the option where the verifier is
+    built, so a mistyped option fails loudly rather than silently falling back to the default.
+    """
+
+
+def _dependency_timeout(value: Optional[float]) -> float:
+    if value is None:
+        return DEFAULT_DEPENDENCY_TIMEOUT_MS
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not (0 < value <= MAX_DEPENDENCY_TIMEOUT_MS)
+    ):
+        raise DependencyTimeoutOptionError(
+            "dependency_timeout_ms must be a number of milliseconds greater than 0 and at "
+            f"most {MAX_DEPENDENCY_TIMEOUT_MS} (got {value!r})"
+        )
+    return float(value)
+
+
+class DeadlineExceededError(Exception):
+    """What a dependency call raises once its deadline has passed - matching the TypeScript
+    original's `DeadlineExceededError`, so a caller can tell a timeout apart from the
+    dependency's own failure (both are still caught and recorded as a fail-closed reason by
+    every call site below).
+    """
+
+
+def _describe_timeout(timeout_ms: float) -> str:
+    """`timeout_ms` as a reason states it: in seconds when it is a whole number of them, else
+    in milliseconds - matching the TypeScript original's `describeTimeout`.
+    """
+    if timeout_ms % 1000 != 0:
+        return f"{timeout_ms:g} ms"
+    seconds = timeout_ms / 1000
+    return "1 second" if seconds == 1 else f"{seconds:g} seconds"
+
+
+async def _answer_within_deadline(who: str, ask: Callable[[], Awaitable[Any]], timeout_ms: float) -> Any:
+    """What `ask` answers, under a deadline of `timeout_ms` milliseconds. Raises
+    `DeadlineExceededError` naming `who` if it does not answer in time - matching the
+    TypeScript original's `answerWithinDeadline`. The work `ask` started is not left running
+    forever: `asyncio.wait_for` cancels the inner task once the deadline passes, so its late
+    answer is dropped rather than awaited.
+    """
+    try:
+        return await asyncio.wait_for(ask(), timeout=timeout_ms / 1000)
+    except asyncio.TimeoutError as exc:
+        raise DeadlineExceededError(f"{who} did not answer within {_describe_timeout(timeout_ms)}") from exc
 
 
 @dataclass(frozen=True)
@@ -94,6 +169,7 @@ async def verify_card_proof(proof: Any, req: CoveredRequest, deps: VerifyProofDe
     and the principal.
     """
     reasons: list[str] = []
+    timeout_ms = _dependency_timeout(deps.dependency_timeout_ms)
     parsed = parse_card_proof_meta(proof)
     if not parsed.ok:
         return ProofVerifyFailed(reasons=("malformed_proof",))
@@ -104,9 +180,11 @@ async def verify_card_proof(proof: Any, req: CoveredRequest, deps: VerifyProofDe
 
     # `resolve_key` (DID-key resolution, possibly a network fetch) and `compute_request_hash`
     # (local JCS + SHA-256) are INDEPENDENT - run them concurrently.
-    key, computed_hash = await asyncio.gather(_resolve_key(meta.kid, deps, reasons), _compute_hash(req))
+    key, computed_hash = await asyncio.gather(
+        _resolve_key(meta.kid, deps, reasons, timeout_ms), _compute_hash(req)
+    )
     if key is not None:
-        await _assert_did_membership(key, meta.did, deps, reasons)
+        await _assert_did_membership(key, meta.did, deps, reasons, timeout_ms)
 
     # Bind the declared alg to the resolved key type: an ES256 claim MUST carry a P-256 key,
     # an EdDSA claim an Ed25519 key. `alg` is a signed covered claim, but the KEY type is
@@ -133,7 +211,7 @@ async def verify_card_proof(proof: Any, req: CoveredRequest, deps: VerifyProofDe
     # Authenticate every binding before claiming state. The shared cache must atomically
     # decide which validated request, if any, first admits this nonce.
     if len(reasons) == 0:
-        await _consume_nonce(meta, deps, reasons)
+        await _consume_nonce(meta, deps, reasons, timeout_ms)
 
     ok = len(reasons) == 0
     if ok:
@@ -145,17 +223,21 @@ async def _compute_hash(req: CoveredRequest) -> str:
     return compute_request_hash(req)
 
 
-async def _resolve_key(kid: str, deps: VerifyProofDeps, reasons: list[str]) -> Optional[dict[str, Any]]:
-    """Resolve the signing key for `kid`; fail-closed (records `key_unresolvable`) on raise."""
+async def _resolve_key(
+    kid: str, deps: VerifyProofDeps, reasons: list[str], timeout_ms: float
+) -> Optional[dict[str, Any]]:
+    """Resolve the signing key for `kid`, under a dependency deadline; fail-closed (records
+    `key_unresolvable`) on raise OR timeout.
+    """
     try:
-        return await deps.resolve_key(kid)
+        return await _answer_within_deadline("the key resolver", lambda: deps.resolve_key(kid), timeout_ms)
     except Exception:
         reasons.append("key_unresolvable")
         return None
 
 
 async def _assert_did_membership(
-    key: dict[str, Any], did: str, deps: VerifyProofDeps, reasons: list[str]
+    key: dict[str, Any], did: str, deps: VerifyProofDeps, reasons: list[str], timeout_ms: float
 ) -> None:
     """Cryptographically bind the signing key to `did`: it MUST be one of the DID document's
     verification keys (RFC 7638 thumbprint membership), via the injected `resolve_did_keys`
@@ -167,8 +249,11 @@ async def _assert_did_membership(
         if not deps.trust_resolve_key_authority:
             reasons.append("did_membership_unverifiable")
         return
+    resolve_did_keys = deps.resolve_did_keys
     try:
-        did_keys = await deps.resolve_did_keys(did)
+        did_keys = await _answer_within_deadline(
+            "the DID key resolver", lambda: resolve_did_keys(did), timeout_ms
+        )
     except Exception:
         reasons.append("did_keys_unresolvable")
         return
@@ -182,10 +267,13 @@ async def _assert_did_membership(
         reasons.append("kid_not_in_did_document")
 
 
-async def _consume_nonce(meta: CardProofMeta, deps: VerifyProofDeps, reasons: list[str]) -> None:
+async def _consume_nonce(
+    meta: CardProofMeta, deps: VerifyProofDeps, reasons: list[str], timeout_ms: float
+) -> None:
     """Atomically CONSUME the nonce via the injected `consume_nonce_if_fresh` replay seam
-    (test-and-set). `False` is a replay (`nonce_replayed`). When the seam is not supplied
-    there is no replay defense to run, so this FAILS CLOSED (`nonce_seam_missing`).
+    (test-and-set), under a dependency deadline. `False` is a replay (`nonce_replayed`). When
+    the seam is not supplied there is no replay defense to run, so this FAILS CLOSED
+    (`nonce_seam_missing`). A raise OR timeout fails closed as `nonce_cache_unavailable`.
     """
     consume = deps.consume_nonce_if_fresh
     if consume is None:
@@ -193,7 +281,10 @@ async def _consume_nonce(meta: CardProofMeta, deps: VerifyProofDeps, reasons: li
         return
     try:
         min_ttl_sec = _nonce_retention_seconds(1, meta.expires + deps.skew_sec, deps.now())
-        if (await consume(meta.nonce, meta.did, min_ttl_sec)) is not True:
+        fresh = await _answer_within_deadline(
+            "the nonce cache", lambda: consume(meta.nonce, meta.did, min_ttl_sec), timeout_ms
+        )
+        if fresh is not True:
             reasons.append("nonce_replayed")
     except Exception:
         reasons.append("nonce_cache_unavailable")

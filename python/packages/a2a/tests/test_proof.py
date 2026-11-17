@@ -4,6 +4,7 @@
 # it's a from-spec Python re-implementation, not a port - see docs/design-decisions.md D13).
 # These tests exercise the real fail-closed behaviour described in @kya-os/mcp's own
 # card/proof/verify.ts, read directly from node_modules, not assumed.
+import asyncio
 import base64
 import json
 
@@ -22,7 +23,12 @@ from cheqd_agent_identity_a2a.proof.canonical import (
 )
 from cheqd_agent_identity_a2a.proof.signer import ed25519_signer_from_jwk
 from cheqd_agent_identity_a2a.proof.small_order import is_small_order_ed25519_key
-from cheqd_agent_identity_a2a.proof.types import KYA_OS_CARD_PROOF_META_KEY, PROOF_PROFILE_V1, CardProofMeta
+from cheqd_agent_identity_a2a.proof.types import (
+    KYA_OS_CARD_PROOF_META_KEY,
+    PROOF_PROFILE_V1,
+    CardProofMeta,
+    parse_card_proof_meta,
+)
 from cheqd_agent_identity_a2a.proof.verify import VerifyProofDeps, verify_card_proof
 
 
@@ -423,3 +429,111 @@ def ed25519_private_jwk_dict() -> tuple[dict, dict]:
     private_jwk, public_bytes = ed25519_private_jwk()
     public_jwk = {"kty": "OKP", "crv": "Ed25519", "x": _b64url(public_bytes)}
     return private_jwk, public_jwk
+
+
+def _base_proof_dict() -> dict:
+    """A structurally-valid `CardProofMeta`-shaped dict - enough to exercise
+    `parse_card_proof_meta`'s own field validation, independent of signature verification.
+    """
+    return {
+        "prf": PROOF_PROFILE_V1,
+        "alg": "EdDSA",
+        "did": DID,
+        "kid": KID,
+        "audience": AUDIENCE,
+        "nonce": "abc123",
+        "created": 1700000000,
+        "expires": 1700000010,
+        "requestHash": "sha-256=:abcd:",
+        "jws": "a.b.c",
+    }
+
+
+@pytest.mark.parametrize("field", ["did", "kid", "audience", "nonce"])
+def test_a_trailing_newline_is_rejected_not_accepted(field):
+    # Regression for a Python/TS parity gap: `re.match(..., value)` with a trailing `$` in the
+    # pattern matches just before a final '\n' in Python (not true end-of-string), so these
+    # fields previously accepted a value with a trailing newline that the TS zod schema (whose
+    # `$` has no such special-casing) rejects outright. `nonce` is documented as embedded
+    # verbatim in the RFC 9421 signature base, so accepting a trailing newline there is a
+    # header-injection hazard once `httpSig` verification is wired up. Confirmed directly:
+    # `re.match(r"^[A-Za-z0-9_-]+$", "abc\n")` is truthy; `/^[A-Za-z0-9_-]+$/.test("abc\n")` in
+    # Node is `false`.
+    proof = _base_proof_dict()
+    proof[field] = proof[field] + "\n"
+    result = parse_card_proof_meta(proof)
+    assert result.ok is False, f"{field} with a trailing newline must be rejected, matching TS"
+
+
+def test_cnf_jkt_trailing_newline_is_rejected_not_accepted():
+    proof = _base_proof_dict()
+    proof["cnf"] = {"jkt": "thumbprint123\n"}
+    result = parse_card_proof_meta(proof)
+    assert result.ok is False
+
+
+# --- dependency-timeout bounding (parity with TS's answerWithinDeadline) -------------------
+# A slow/hanging seam (resolve_key, resolve_did_keys, or the nonce cache) must not hold a
+# verification open indefinitely. Each test below wraps the verify_card_proof call itself in a
+# generous outer asyncio.wait_for: before the fix, the unbounded inner await means the whole
+# call hangs past that outer bound and the test fails with a TimeoutError raised from
+# asyncio.wait_for (the "right symptom" for an unbounded dependency); after the fix, the
+# dependency_timeout_ms passed to VerifyProofDeps bounds the inner call long before the outer
+# timeout, and verification completes fail-closed with the matching reason.
+
+
+async def _never_resolves(*_args):
+    await asyncio.Event().wait()
+
+
+async def test_a_hanging_key_resolver_is_bounded_by_dependency_timeout_ms():
+    req = req_for()
+    proof, public_jwk = await mint(req)
+    deps = basic_deps(public_jwk, resolve_key=_never_resolves, dependency_timeout_ms=20)
+    result = await asyncio.wait_for(verify_card_proof(proof, req, deps), timeout=2.0)
+    assert result.ok is False
+    assert "key_unresolvable" in result.reasons
+
+
+async def test_a_hanging_did_key_resolver_is_bounded_by_dependency_timeout_ms():
+    req = req_for()
+    proof, public_jwk = await mint(req)
+    deps = basic_deps(
+        public_jwk,
+        resolve_did_keys=_never_resolves,
+        trust_resolve_key_authority=False,
+        dependency_timeout_ms=20,
+    )
+    result = await asyncio.wait_for(verify_card_proof(proof, req, deps), timeout=2.0)
+    assert result.ok is False
+    assert "did_keys_unresolvable" in result.reasons
+
+
+async def test_a_hanging_nonce_cache_is_bounded_by_dependency_timeout_ms():
+    req = req_for()
+    proof, public_jwk = await mint(req)
+    deps = basic_deps(public_jwk, consume_nonce_if_fresh=_never_resolves, dependency_timeout_ms=20)
+    result = await asyncio.wait_for(verify_card_proof(proof, req, deps), timeout=2.0)
+    assert result.ok is False
+    assert "nonce_cache_unavailable" in result.reasons
+
+
+async def test_an_invalid_dependency_timeout_ms_raises_a_type_error_at_verify_time():
+    from cheqd_agent_identity_a2a.proof.verify import DependencyTimeoutOptionError
+
+    req = req_for()
+    proof, public_jwk = await mint(req)
+    for bad_value in (0, -5, "5000", float("inf"), float("nan")):
+        deps = basic_deps(public_jwk, dependency_timeout_ms=bad_value)
+        with pytest.raises(DependencyTimeoutOptionError):
+            await verify_card_proof(proof, req, deps)
+
+
+async def test_a_fast_resolver_still_verifies_normally_with_a_short_dependency_timeout():
+    # Guards against a false positive from the deadline change: a well-behaved dependency
+    # must still succeed even under a short dependency_timeout_ms.
+    req = req_for()
+    proof, public_jwk = await mint(req)
+    deps = basic_deps(public_jwk, dependency_timeout_ms=20)
+    result = await verify_card_proof(proof, req, deps)
+    assert result.ok is True

@@ -141,16 +141,16 @@ def parse_card_proof_meta(value: Any) -> ParsedCardProofResult:
     if value.get("alg") not in ("EdDSA", "ES256"):
         return ParsedCardProofFailed()
     did = value.get("did")
-    if not isinstance(did, str) or not _DID_RE.match(did):
+    if not isinstance(did, str) or not _DID_RE.fullmatch(did):
         return ParsedCardProofFailed()
     kid = value.get("kid")
-    if not isinstance(kid, str) or not _KID_RE.match(kid):
+    if not isinstance(kid, str) or not _KID_RE.fullmatch(kid):
         return ParsedCardProofFailed()
     audience = value.get("audience")
-    if not isinstance(audience, str) or not _DID_RE.match(audience):
+    if not isinstance(audience, str) or not _DID_RE.fullmatch(audience):
         return ParsedCardProofFailed()
     nonce = value.get("nonce")
-    if not isinstance(nonce, str) or len(nonce) == 0 or not _BASE64URL_RE.match(nonce):
+    if not isinstance(nonce, str) or len(nonce) == 0 or not _BASE64URL_RE.fullmatch(nonce):
         return ParsedCardProofFailed()
     created = _coerce_non_negative_int(value.get("created"))
     if created is None:
@@ -174,7 +174,7 @@ def parse_card_proof_meta(value: Any) -> ParsedCardProofResult:
         if not isinstance(raw_cnf, dict) or set(raw_cnf.keys()) != {"jkt"}:
             return ParsedCardProofFailed()
         jkt = raw_cnf.get("jkt")
-        if not isinstance(jkt, str) or len(jkt) == 0 or not _BASE64URL_RE.match(jkt):
+        if not isinstance(jkt, str) or len(jkt) == 0 or not _BASE64URL_RE.fullmatch(jkt):
             return ParsedCardProofFailed()
         cnf = CardProofCnf(jkt=jkt)
 
