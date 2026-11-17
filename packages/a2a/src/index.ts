@@ -1,3 +1,4 @@
+export * from './agent-card-signature.js';
 export * from './covered-request.js';
 export * from './trust-extension.js';
 export * from './types.js';

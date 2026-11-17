@@ -28,6 +28,12 @@ A2A binding: a request/response proof gate for `@a2a-js/sdk`, and the matching c
   (accepted when checks pass, rejected with the executor never running when they don't) and
   `test/trust-extension.test.mjs` for the module in isolation.
 - `src/client.ts` — the client-side `CallInterceptor`.
+- `src/agent-card-signature.ts` — `signAgentCard`, a DID-anchored Agent Card signer over
+  `@a2a-js/sdk`'s own `generateAgentCardSignature` (never a reimplementation of the JWS
+  construction — see the findings doc §4). Moved here from the `cheqd/credo-ts` fork's
+  `packages/cheqd/src/agent-id/agentCardSignature.ts`, which built an equivalent helper against
+  Credo's own key APIs because this package wasn't published anywhere a Credo-based agent could
+  depend on it instead.
 - `evidence/` — the research scripts behind all of this, runnable against real
   `@a2a-js/sdk` and `@kya-os/mcp`.
 - `smoke-test.mjs`, `smoke-test-rest.mjs`, `smoke-test-grpc.mjs`, `smoke-test-agent-card.mjs`,
