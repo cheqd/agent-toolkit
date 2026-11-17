@@ -126,10 +126,15 @@ test('checkout allowed_merchants: merchant not allowed fails', () => {
 	assert.ok(violations.some((v) => v.includes('not in allowed list')));
 });
 
-test('checkout line_items: wildcard requirement satisfied by any item', () => {
+test('checkout line_items: requirement satisfied by an explicitly acceptable item', () => {
+	// Regression (#55): acceptable_items: [] used to mean "any item accepted" (a wildcard) - it
+	// now means "nothing is accepted" (fail closed), so this requirement must name the item it
+	// accepts explicitly rather than relying on an empty array.
 	const open = {
 		vct: 'mandate.checkout.open.1',
-		constraints: [{ type: 'checkout.line_items', items: [{ id: 'req1', acceptable_items: [], quantity: 1 }] }],
+		constraints: [
+			{ type: 'checkout.line_items', items: [{ id: 'req1', acceptable_items: [{ id: 'sku-1', title: 'Shoe' }], quantity: 1 }] },
+		],
 		cnf: { jwk: {} },
 	};
 	const checkout = {
