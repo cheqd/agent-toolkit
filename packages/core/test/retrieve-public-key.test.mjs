@@ -181,3 +181,72 @@ test('a kid with no fragment is rejected', async () => {
 	const retrieve = createRetrievePublicKey();
 	await assert.rejects(() => retrieve('did:web:example.com'));
 });
+
+// Regression: didWebToUrl used to percent-decode each segment and concatenate it straight into
+// a URL template with no re-validation. A decoded segment containing '@' is read by a real URL
+// parser as an authority separator: `good.example.com@internal-host` becomes userinfo
+// `good.example.com` (discarded) plus host `internal-host` - an SSRF primitive letting a
+// did:web value that superficially names one host actually direct the fetch at a different one.
+test('a did:web segment that decodes to an @ is rejected, not built into a host-confusing URL', async () => {
+	const did = 'did:web:good.example.com%40internal-host';
+	let called = false;
+	const fetchDidWebDocument = async () => {
+		called = true;
+		return { status: 200, async json() { return { id: did, verificationMethod: [] }; } };
+	};
+	const retrieve = createRetrievePublicKey({ fetchDidWebDocument });
+	await assert.rejects(() => retrieve(`${did}#key-1`));
+	assert.equal(called, false, 'must be rejected before any fetch is attempted');
+});
+
+// Regression: a decoded '#' is a fragment separator to a real URL parser - it silently
+// truncates the path actually sent to the server, a corruption of the same root cause. Asserts
+// the fetch is never even attempted (not merely that the overall call rejects), so this cannot
+// pass for the unrelated reason that an otherwise-successful fetch returns no matching key.
+test('a did:web segment that decodes to a # is rejected, not built into a truncating URL', async () => {
+	const did = 'did:web:example.com:a%23b';
+	let called = false;
+	const fetchDidWebDocument = async () => {
+		called = true;
+		return { status: 200, async json() { return { id: did, verificationMethod: [] }; } };
+	};
+	const retrieve = createRetrievePublicKey({ fetchDidWebDocument });
+	await assert.rejects(() => retrieve(`${did}#key-1`));
+	assert.equal(called, false, 'must be rejected before any fetch is attempted');
+});
+
+// Regression: a decoded '/' blurs the host/path boundary the same way.
+test('a did:web segment that decodes to a / is rejected, not built into a boundary-blurring URL', async () => {
+	const did = 'did:web:example.com%2Fattacker-path';
+	let called = false;
+	const fetchDidWebDocument = async () => {
+		called = true;
+		return { status: 200, async json() { return { id: did, verificationMethod: [] }; } };
+	};
+	const retrieve = createRetrievePublicKey({ fetchDidWebDocument });
+	await assert.rejects(() => retrieve(`${did}#key-1`));
+	assert.equal(called, false, 'must be rejected before any fetch is attempted');
+});
+
+test('a did:web fetch that never resolves is rejected once the timeout elapses, not hung forever', async () => {
+	const did = 'did:web:example.com';
+	const fetchDidWebDocument = () => new Promise(() => {}); // never settles
+	const retrieve = createRetrievePublicKey({ fetchDidWebDocument, didWebFetchTimeoutMs: 20 });
+	await assert.rejects(() => retrieve(`${did}#key-1`));
+});
+
+test('a did:web response body over the configured byte cap is rejected, not buffered whole', async () => {
+	// Exercises the DEFAULT fetch implementation's own bound via a real streamed Response body,
+	// not the injected json() shortcut other tests use (an injected fetchDidWebDocument is
+	// responsible for its own bound - see the module doc comment).
+	const did = 'did:web:example.com';
+	const hugeBody = JSON.stringify({ id: did, verificationMethod: [], padding: 'x'.repeat(1000) });
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = async () => new Response(hugeBody, { status: 200 });
+	try {
+		const retrieve = createRetrievePublicKey({ didWebMaxResponseBytes: 10 });
+		await assert.rejects(() => retrieve(`${did}#key-1`));
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});

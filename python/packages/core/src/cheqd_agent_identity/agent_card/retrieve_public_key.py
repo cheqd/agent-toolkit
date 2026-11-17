@@ -14,12 +14,39 @@ Fails closed - raises `KeyResolutionError`, never anything else - on: an unsuppo
 method, a malformed DID, `kid` not matching `expected_did` (when given), a `kid` the resolved
 document does not publish, transport failure, invalid JSON, or a malformed DID document.
 
+`did:web` resolution has two further hardening measures, both found by review:
+
+1. Segment charset validation. `_did_web_to_url` percent-decodes each `:`-delimited segment of
+   the DID (per the DID Web Method) and then concatenates the decoded value straight into an
+   `https://{host}/...` f-string. Decoding BEFORE validating, with no re-validation of what came
+   out, lets a decoded segment contain characters that are structurally meaningful to a URL
+   parser - `@`, `/`, `#`, backslash, control characters - changing what the resulting string
+   actually means once a real URL parser (the one the HTTP client itself uses) reads it. E.g.
+   `did:web:good.example.com%40internal-host` decodes to the single segment
+   `good.example.com@internal-host`; built naively into
+   `https://good.example.com@internal-host/.well-known/did.json`, a URL parser reads
+   `good.example.com` as discarded userinfo and `internal-host` as the REAL host contacted - an
+   SSRF primitive that lets a `did:web` value which superficially names one host actually direct
+   the fetch at a completely different one (an internal service, a metadata endpoint). `%23` (a
+   literal `#`) is a milder version of the same root cause: it silently truncates the path the
+   server actually receives, since a URL parser treats everything after `#` as a client-side-
+   only fragment. Every decoded segment is now validated against a safe charset BEFORE being
+   used to build the URL, rejecting anything that could be reinterpreted as new URL structure
+   rather than plain host/path data.
+2. A fetch timeout and a response-size cap (enforced for the default fetch implementation; an
+   injected `fetch_did_web_document` is responsible for its own body-size bound, but the timeout
+   wraps ANY implementation, default or injected) - a compromised or malicious `did:web` server
+   could otherwise hang the request indefinitely or stream an unbounded response body to exhaust
+   memory.
+
 SPDX-License-Identifier: Apache-2.0
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import json
 import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping, Optional, Protocol, Sequence
@@ -31,6 +58,17 @@ PublicKeyJwk = dict[str, Any]
 BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 BASE58_ALPHABET_MAP = {char: index for index, char in enumerate(BASE58_ALPHABET)}
 
+DEFAULT_DID_WEB_FETCH_TIMEOUT_SECONDS = 5.0
+DEFAULT_DID_WEB_MAX_RESPONSE_BYTES = 1_000_000
+
+# Forbids every character that is structurally meaningful to a URL parser - '@' (authority/
+# userinfo separator - the SSRF-enabling case), '/' and '\' (path/authority separators), '#'
+# (fragment separator - silently truncates what the server actually receives), '?' (query
+# separator), and any ASCII control character or space. Deliberately permissive otherwise
+# (Unicode letters in an IDN host, say) - this is not a hostname-syntax validator, only a guard
+# against URL-structuring characters slipping through a decode.
+_UNSAFE_DID_WEB_SEGMENT_CHARS = frozenset("@/\\#?")
+
 
 class KeyResolutionError(Exception):
     """Raised, with a stable machine-readable reason, whenever a key cannot be resolved."""
@@ -38,6 +76,12 @@ class KeyResolutionError(Exception):
 
 def _fail(reason: str) -> None:
     raise KeyResolutionError(reason)
+
+
+def _is_safe_did_web_segment(segment: str) -> bool:
+    if any(ord(char) <= 0x20 or ord(char) == 0x7F for char in segment):
+        return False
+    return not any(char in _UNSAFE_DID_WEB_SEGMENT_CHARS for char in segment)
 
 
 @dataclass(frozen=True)
@@ -65,9 +109,30 @@ FetchDidWebDocument = Callable[[str], Awaitable[DidWebResponse]]
 ResolveDidCheqd = Callable[[str], Awaitable[Optional[MinimalDidDocument]]]
 
 
-async def _default_fetch_did_web(url: str) -> DidWebResponse:
-    async with httpx.AsyncClient() as client:
-        return await client.get(url)
+@dataclass(frozen=True)
+class _BoundedDidWebResponse:
+    status_code: int
+    _text: str
+
+    def json(self) -> Any:
+        return json.loads(self._text)
+
+
+def _default_fetch_did_web(max_response_bytes: int) -> FetchDidWebDocument:
+    async def fetch_did_web(url: str) -> DidWebResponse:
+        async with httpx.AsyncClient() as client:
+            async with client.stream("GET", url) as response:
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    if total > max_response_bytes:
+                        _fail("did_web_response_too_large")
+                    chunks.append(chunk)
+                text = b"".join(chunks).decode("utf-8")
+                return _BoundedDidWebResponse(status_code=response.status_code, _text=text)
+
+    return fetch_did_web
 
 
 def create_retrieve_public_key(
@@ -75,11 +140,13 @@ def create_retrieve_public_key(
     expected_did: Optional[str] = None,
     fetch_did_web_document: Optional[FetchDidWebDocument] = None,
     resolve_did_cheqd: Optional[ResolveDidCheqd] = None,
+    did_web_fetch_timeout_seconds: float = DEFAULT_DID_WEB_FETCH_TIMEOUT_SECONDS,
+    did_web_max_response_bytes: int = DEFAULT_DID_WEB_MAX_RESPONSE_BYTES,
 ) -> Callable[[str, Optional[str]], Awaitable[PublicKeyJwk]]:
     """Build a `retrieve_public_key(kid, jku)` callback. `jku` is accepted for shape
     compatibility and never read.
     """
-    fetch_did_web = fetch_did_web_document or _default_fetch_did_web
+    fetch_did_web = fetch_did_web_document or _default_fetch_did_web(did_web_max_response_bytes)
 
     async def retrieve_public_key(kid: str, _jku: Optional[str] = None) -> PublicKeyJwk:
         hash_index = kid.find("#")
@@ -92,7 +159,7 @@ def create_retrieve_public_key(
         if did.startswith("did:key:"):
             return _resolve_did_key(did, kid)
         if did.startswith("did:web:"):
-            return await _resolve_did_web(did, kid, fetch_did_web)
+            return await _resolve_did_web(did, kid, fetch_did_web, did_web_fetch_timeout_seconds)
         if did.startswith("did:cheqd:"):
             if resolve_did_cheqd is None:
                 _fail("did_cheqd_resolution_not_configured")
@@ -131,16 +198,24 @@ def _method_id(method: MinimalVerificationMethod, did: str) -> str:
     return f"{did}{method.id}" if method.id.startswith("#") else method.id
 
 
-async def _resolve_did_web(did: str, kid: str, fetch_did_web: FetchDidWebDocument) -> PublicKeyJwk:
+async def _resolve_did_web(
+    did: str, kid: str, fetch_did_web: FetchDidWebDocument, timeout_seconds: float
+) -> PublicKeyJwk:
     url = _did_web_to_url(did)
     try:
-        response = await fetch_did_web(url)
+        response = await asyncio.wait_for(fetch_did_web(url), timeout=timeout_seconds)
+    except KeyResolutionError:
+        raise
+    except asyncio.TimeoutError:
+        _fail("did_web_fetch_timeout")
     except Exception:
         _fail("did_web_fetch_failed")
     if response.status_code != 200:
         _fail("did_web_fetch_failed")
     try:
         document = response.json()
+    except KeyResolutionError:
+        raise
     except Exception:
         _fail("did_web_invalid_json")
     parsed = _parse_minimal_did_document(document)
@@ -150,15 +225,24 @@ async def _resolve_did_web(did: str, kid: str, fetch_did_web: FetchDidWebDocumen
 
 
 def _did_web_to_url(did: str) -> str:
+    """`did:web:example.com` -> `https://example.com/.well-known/did.json`;
+    `did:web:example.com:a:b` -> `https://example.com/a/b/did.json` (DID Web Method, Read).
+    Each decoded segment is validated against a safe charset - see the module doc comment for
+    why skipping this (building the URL directly from whatever a percent-decode produces) is an
+    SSRF primitive, not merely a cosmetic concern.
+    """
     rest = did[len("did:web:") :]
     if len(rest) == 0:
         _fail("malformed_did_web")
     segments = []
     for segment in rest.split(":"):
         try:
-            segments.append(urllib.parse.unquote(segment, errors="strict"))
+            decoded = urllib.parse.unquote(segment, errors="strict")
         except Exception:
             _fail("malformed_did_web")
+        if not _is_safe_did_web_segment(decoded):
+            _fail("malformed_did_web")
+        segments.append(decoded)
     host = segments[0] if segments else ""
     if len(host) == 0:
         _fail("malformed_did_web")

@@ -2,8 +2,10 @@
 # Tests for the DID-backed create_retrieve_public_key callback. did:key is pure computation,
 # checked against a real generated Ed25519 keypair encoded by hand (no external test vector
 # trusted blindly). did:web uses an injected fetch, so no network call is made.
+import asyncio
 import base64
 
+import httpx
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -245,3 +247,113 @@ async def test_a_kid_with_no_fragment_is_rejected():
     retrieve = create_retrieve_public_key()
     with pytest.raises(KeyResolutionError):
         await retrieve("did:web:example.com", None)
+
+
+# Regression: _did_web_to_url used to percent-decode each segment and concatenate it straight
+# into a URL f-string with no re-validation. A decoded segment containing '@' is read by a real
+# URL parser as an authority separator: `good.example.com@internal-host` becomes userinfo
+# `good.example.com` (discarded) plus host `internal-host` - an SSRF primitive letting a
+# did:web value that superficially names one host actually direct the fetch at a different one.
+# Asserts the fetch is never even attempted, so this cannot pass for the unrelated reason that
+# an otherwise-successful fetch returns no matching key.
+async def test_a_did_web_segment_that_decodes_to_an_at_sign_is_rejected():
+    did = "did:web:good.example.com%40internal-host"
+    called = {"value": False}
+
+    async def fetch_did_web_document(_url):
+        called["value"] = True
+
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {"id": did, "verificationMethod": []}
+
+        return Response()
+
+    retrieve = create_retrieve_public_key(fetch_did_web_document=fetch_did_web_document)
+    with pytest.raises(KeyResolutionError):
+        await retrieve(f"{did}#key-1", None)
+    assert called["value"] is False, "must be rejected before any fetch is attempted"
+
+
+# Regression: a decoded '#' is a fragment separator to a real URL parser - it silently
+# truncates the path actually sent to the server, a corruption of the same root cause.
+async def test_a_did_web_segment_that_decodes_to_a_hash_is_rejected():
+    did = "did:web:example.com:a%23b"
+    called = {"value": False}
+
+    async def fetch_did_web_document(_url):
+        called["value"] = True
+
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {"id": did, "verificationMethod": []}
+
+        return Response()
+
+    retrieve = create_retrieve_public_key(fetch_did_web_document=fetch_did_web_document)
+    with pytest.raises(KeyResolutionError):
+        await retrieve(f"{did}#key-1", None)
+    assert called["value"] is False, "must be rejected before any fetch is attempted"
+
+
+# Regression: a decoded '/' blurs the host/path boundary the same way.
+async def test_a_did_web_segment_that_decodes_to_a_slash_is_rejected():
+    did = "did:web:example.com%2Fattacker-path"
+    called = {"value": False}
+
+    async def fetch_did_web_document(_url):
+        called["value"] = True
+
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {"id": did, "verificationMethod": []}
+
+        return Response()
+
+    retrieve = create_retrieve_public_key(fetch_did_web_document=fetch_did_web_document)
+    with pytest.raises(KeyResolutionError):
+        await retrieve(f"{did}#key-1", None)
+    assert called["value"] is False, "must be rejected before any fetch is attempted"
+
+
+async def test_a_did_web_fetch_that_never_resolves_is_rejected_once_the_timeout_elapses():
+    did = "did:web:example.com"
+
+    async def fetch_did_web_document(_url):
+        await asyncio.sleep(3600)
+
+    retrieve = create_retrieve_public_key(
+        fetch_did_web_document=fetch_did_web_document, did_web_fetch_timeout_seconds=0.05
+    )
+    with pytest.raises(KeyResolutionError):
+        await retrieve(f"{did}#key-1", None)
+
+
+async def test_a_did_web_response_body_over_the_configured_byte_cap_is_rejected(monkeypatch):
+    # Exercises the DEFAULT fetch implementation's own bound via a real streamed httpx response,
+    # not the injected json() shortcut other tests use (an injected fetch_did_web_document is
+    # responsible for its own bound - see the module doc comment).
+    did = "did:web:example.com"
+    huge_body = f'{{"id": "{did}", "verificationMethod": [], "padding": "{"x" * 1000}"}}'.encode("utf-8")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=huge_body)
+
+    transport = httpx.MockTransport(handler)
+    real_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args, **kwargs):
+        kwargs["transport"] = transport
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", patched_async_client)
+
+    retrieve = create_retrieve_public_key(did_web_max_response_bytes=10)
+    with pytest.raises(KeyResolutionError):
+        await retrieve(f"{did}#key-1", None)
