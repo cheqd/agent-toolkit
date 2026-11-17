@@ -15,7 +15,23 @@ const fixture = JSON.parse(
 
 function checkerFor(credential) {
 	const resolveDidCheqd = async (did) =>
-		did === fixture.did ? { id: fixture.did, verificationMethod: [{ id: fixture.kid, publicKeyJwk: fixture.publicKeyJwk }] } : null;
+		did === fixture.did
+			? {
+					id: fixture.did,
+					// @kya-os/mcp 1.23.0+ (W3C Controlled Identifiers v1.0 §3.3 step 8): a retrieved
+					// method must have a non-empty id, type and controller, and must be listed
+					// under assertionMethod, not merely verificationMethod.
+					verificationMethod: [
+						{
+							id: fixture.kid,
+							type: 'JsonWebKey2020',
+							controller: fixture.did,
+							publicKeyJwk: fixture.publicKeyJwk,
+						},
+					],
+					assertionMethod: [fixture.kid],
+				}
+			: null;
 	const fetch = async (url) =>
 		url === credential.id
 			? { ok: true, status: 200, json: async () => credential }
@@ -25,13 +41,19 @@ function checkerFor(credential) {
 
 test('accepts a real #658-branch-signed credential and reads the revoked bit', async () => {
 	const checker = checkerFor(fixture.credential);
-	const result = await checker(fixture.entries.revokedIndex0);
-	assert.deepEqual(result, { revoked: true, fresh: true });
+	// @kya-os/mcp 1.23.0: with verifyStatusList set, the checker must be told the checked
+	// credential's issuer (rule 4 of "status lists held to their credential") to decide it's the
+	// URL's keeper - a plain JSON entry carries no issuer of its own, so it's passed explicitly.
+	const result = await checker(fixture.entries.revokedIndex0, { credentialIssuer: fixture.credential.issuer });
+	// @kya-os/mcp 1.23.0 always adds `code`/`transient` (RefusalCoding) to the verdict; check the
+	// two fields this test is actually about rather than an exact-shape match.
+	assert.equal(result.revoked, true);
+	assert.equal(result.fresh, true);
 });
 
 test('reads a clear bit from the same credential', async () => {
 	const checker = checkerFor(fixture.credential);
-	const result = await checker(fixture.entries.clearIndex1);
+	const result = await checker(fixture.entries.clearIndex1, { credentialIssuer: fixture.credential.issuer });
 	assert.deepEqual(result, { revoked: false, fresh: true });
 });
 
