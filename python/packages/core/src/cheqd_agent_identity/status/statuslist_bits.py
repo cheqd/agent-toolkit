@@ -25,8 +25,8 @@ SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
 import base64
-import gzip
 import re
+import zlib
 from typing import Callable
 
 MAX_STATUS_LIST_BYTES = 16 * 1024 * 1024
@@ -62,15 +62,38 @@ def _is_gzip(data: bytes) -> bool:
 
 
 def _default_decompress(data: bytes) -> bytes:
-    return gzip.decompress(data)
+    """Inflate GZIP-framed `data`, bounding the OUTPUT size WHILE inflating - not after.
+
+    `gzip.decompress` has no output limit: it fully inflates before anything downstream can
+    check the result, so a small, highly-compressible payload (a decompression bomb) can spike
+    memory by orders of magnitude before `decode_status_list_payload`'s POST-inflation
+    `MAX_STATUS_LIST_BYTES` check ever runs - by then the memory is already spent. Capping
+    `zlib.decompressobj`'s own `decompress(data, max_length)` call to `MAX_STATUS_LIST_BYTES +
+    1` stops inflation at that ceiling: a decompressor that hits the cap leaves whatever
+    compressed bytes it didn't need to reach it in `unconsumed_tail`, which can only be
+    non-empty when more output remained than the cap allowed - fail-closed on that signal
+    instead of asking the decompressor for more. `wbits=31` tells `zlib` to parse the GZIP
+    header/trailer itself (`decompressobj`'s default `wbits=15` expects raw zlib framing only).
+
+    Ported from `@kya-os/mcp/utils/statuslist-gzip.js`'s `gunzip`, which bounds the equivalent
+    `node:zlib` call with `{ maxOutputLength: MAX_STATUS_LIST_BYTES }` so the TS reference never
+    allocates past the cap either.
+    """
+    decompressor = zlib.decompressobj(wbits=31)
+    inflated = decompressor.decompress(data, MAX_STATUS_LIST_BYTES + 1)
+    if decompressor.unconsumed_tail:
+        raise ValueError(f"Status list too large: exceeds {MAX_STATUS_LIST_BYTES} bytes while inflating")
+    return inflated + decompressor.flush()
 
 
 def decode_status_list_payload(encoded_list: str, decompress: Decompress = _default_decompress) -> bytes:
     """Decode a status-list `encodedList` to the raw bitstring: strip the optional multibase
     `u` prefix, base64url-decode, run the injected decompressor, and re-check
-    `MAX_STATUS_LIST_BYTES` POST-inflation as a backstop (a production decompressor SHOULD
-    also bound output during inflation; `gzip.decompress` does not, so this check is
-    load-bearing here, not merely defensive).
+    `MAX_STATUS_LIST_BYTES` POST-inflation as a backstop. `_default_decompress` already bounds
+    output WHILE inflating (a decompression bomb raises mid-stream, never fully allocated); this
+    second check remains load-bearing against an INJECTED decompressor (e.g. a
+    `DecompressionStream`-based one, mirroring the TS reference's isomorphic seam) that does not
+    bound its own output.
 
     Raises when the payload is not GZIP, and when the decompressor hands back its GZIP input
     unchanged (a pass-through): read as a bitstring, the GZIP header would clear bits the

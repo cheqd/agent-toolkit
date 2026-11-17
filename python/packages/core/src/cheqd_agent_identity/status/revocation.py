@@ -28,6 +28,19 @@ machinery - this module implements only the single, default "list held to the cr
 issuer" case that is actually used anywhere in this repository today, not the full configurable
 multi-root/configured-URL keeper DSL `@kya-os/mcp` also offers.
 
+ID BINDING: the issuer check above proves a fetched list was signed by the credential's own
+issuer, but NOT that it is the particular list version bound to `entry.status_list_credential` -
+that same issuer may keep several lists (or several revisions of one), so whoever controls what
+the URL actually returns (the host, a CDN, a cache, or an injected-`fetch` bug) can instead serve
+a DIFFERENT, equally genuine list from that issuer where the entry's index happens to read clear.
+W3C Bitstring Status List v1.0 SS2.2 lets a list optionally state its own `id`; `@kya-os/mcp`'s
+`idRejection` (ported here) therefore requires that when a fetched list STATES an `id`, it must
+equal, byte-for-byte, the URL the list was requested from - even in this module's default
+credential-issuer-matches case - and fails closed on a mismatch. A list that states no `id` is
+still accepted (as `@kya-os/mcp` allows whenever, as here, the keeper of every URL is
+unconditionally the credential's own issuer): the `id` only rules out a list that belongs to some
+OTHER url, and the issuer check already rules out every list but this one issuer's.
+
 `statusSize`: an entry whose `statusSize` is present and not `1` keeps its status at a
 different bit position than the one this module reads (W3C Bitstring Status List v1.0 §3.2
 step 10: the bit read is at `statusListIndex * statusSize`, not merely `statusListIndex`).
@@ -145,6 +158,12 @@ def create_revocation_checker(
                     raise ValueError(
                         f"revocation: status list issuer {list_issuer!r} does not keep this "
                         f"entry's URL: expected the credential's issuer {credential_issuer!r}"
+                    )
+                list_id = credential.get("id")
+                if list_id is not None and list_id != entry.status_list_credential:
+                    raise ValueError(
+                        f"revocation: status list id {list_id!r} is not the URL it was "
+                        f"requested from ({entry.status_list_credential!r})"
                     )
                 if (await verify_status_list(credential)) is not True:
                     raise ValueError("revocation: status-list proof rejected")
