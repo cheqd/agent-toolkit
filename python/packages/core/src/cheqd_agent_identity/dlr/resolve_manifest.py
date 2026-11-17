@@ -26,9 +26,11 @@ ManifestKind = Literal["TrustConfigManifest", "CapabilityManifest", "Conformance
 _DEFAULT_MAX_SKEW_MS = 60_000
 _DEFAULT_MAX_BYTES = 1024 * 1024
 _DEFAULT_TTL_MS = 5 * 60_000
+_DEFAULT_MAX_ENTRIES = 1000
 
 _RESOURCE_ID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
 _CHECKSUM_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+_COLLECTION_ID_RE = re.compile(r"^did:cheqd:(?:mainnet|testnet):([A-Za-z0-9_-]{16,64})$")
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,17 @@ def _fail(reason: str) -> None:
     raise _ManifestError(reason)
 
 
+def _collection_id_of(did: str) -> str:
+    """Extracts the did:cheqd collection id (the DID's own unique identifier segment) from
+    `did`. Port of the TypeScript `collectionIdOf` added in PR #43 - same strict regex, same
+    fail-closed behaviour on anything that does not match.
+    """
+    match = _COLLECTION_ID_RE.match(did)
+    if match is None:
+        _fail("unsupported_did")
+    return match.group(1)
+
+
 @dataclass(frozen=True)
 class _Outcome:
     content: Any
@@ -110,10 +123,16 @@ async def resolve_manifest(
             _fail("invalid_min_agreement")
         if len(options.resolvers) < min_agreement:
             _fail("not_enough_resolvers")
+        # Validate the DID's shape before any fetch is constructed or sent - not merely before
+        # trusting the returned resource's resourceCollectionId. An attacker-controlled malformed
+        # `did` (e.g. containing a dot-segment a URL implementation would normalise away) must not
+        # trigger an outbound request at all.
+        collection_id = _collection_id_of(did)
         bases = [_normalise_base(base, options.allow_insecure_resolvers) for base in options.resolvers]
 
         results = await asyncio.gather(
-            *(_check_one(base, did, kind, resource_name, options) for base in bases), return_exceptions=True
+            *(_check_one(base, did, kind, resource_name, collection_id, options) for base in bases),
+            return_exceptions=True,
         )
         agreed: list[tuple[str, _Outcome]] = []
         reasons: list[str] = []
@@ -146,6 +165,7 @@ async def _check_one(
     did: str,
     kind: ManifestKind,
     resource_name: str,
+    collection_id: str,
     options: ResolveManifestOptions,
 ) -> _Outcome:
     now = options.now()
@@ -171,6 +191,12 @@ async def _check_one(
     resource = linked[0]
     if not isinstance(resource, dict):
         _fail("malformed_metadata")
+    # Bind the resolved resource to the DID's own collection, not merely to the (kind, name) pair
+    # a resolver happened to answer with - port of the TypeScript fix in PR #43: a resolver
+    # returning metadata for a different DID's collection (bug, misconfiguration, or compromise)
+    # must not be accepted just because it has a matching resourceType/resourceName.
+    if resource.get("resourceCollectionId") != collection_id:
+        _fail("collection_mismatch")
     if resource.get("resourceType") != kind or resource.get("resourceName") != resource_name:
         _fail("resource_mismatch")
     if resource.get("nextVersionId") is not None:
@@ -244,6 +270,14 @@ def _parse_date(value: Any) -> Optional[float]:
 class ManifestCacheOptions(ResolveManifestOptions):
     ttl_ms_by_kind: Optional[dict[ManifestKind, int]] = None
     default_ttl_ms: int = _DEFAULT_TTL_MS
+    # Hard cap on cache entries, with oldest-entry eviction once reached. Default 1000. The cache
+    # key is (did, kind, resource_name) and resource_name is caller-supplied (e.g. an a2a
+    # trustConfigRef) - a caller presenting a fresh, distinct name every call, and failing or
+    # succeeding either way, would otherwise grow this dict forever (same unbounded-growth vector
+    # as the TS trust-extension cache's maxEntries, see PR #36). Once the cap is hit, the oldest
+    # entry (by insertion order, which dict preserves) is evicted to make room - not a full LRU,
+    # but enough to bound memory.
+    max_entries: int = _DEFAULT_MAX_ENTRIES
 
 
 @dataclass(frozen=True)
@@ -269,11 +303,24 @@ class ManifestCache:
             return cached.result
         result = await resolve_manifest(did, kind, resource_name, self._options)
         ttl = (self._options.ttl_ms_by_kind or {}).get(kind, self._options.default_ttl_ms)
+        # A fresh lookup for an existing key must not grow the entry count, so evict (if needed)
+        # only when this key is new - otherwise a cache at exactly max_entries would evict one
+        # entry on every refresh of an already-tracked key for no reason.
+        if key not in self._cache and len(self._cache) >= self._options.max_entries:
+            oldest = next(iter(self._cache), None)
+            if oldest is not None:
+                del self._cache[oldest]
         self._cache[key] = _CacheEntry(result=result, expires_at=now + ttl)
         return result
 
     def clear(self) -> None:
         self._cache.clear()
+
+    def size(self) -> int:
+        """Current number of cached entries. Exposed for tests/observability, not part of the
+        trust decision.
+        """
+        return len(self._cache)
 
 
 def create_manifest_cache(options: ManifestCacheOptions) -> ManifestCache:
