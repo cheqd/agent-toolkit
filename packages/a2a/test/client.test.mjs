@@ -50,6 +50,11 @@ function taskResult(extraMetadata) {
 	return { id: 't-1', status: { state: 'TASK_STATE_COMPLETED' }, metadata: extraMetadata };
 }
 
+/** A Message result shape - no `status` field, unlike a Task. */
+function messageResult(extraMetadata) {
+	return { messageId: 'm-result-1', role: 'ROLE_AGENT', parts: [{ text: 'hi' }], metadata: extraMetadata };
+}
+
 test('a response with no proof at all REJECTS the call, not just records failure (fail-closed)', async () => {
 	const { interceptor, state } = createProofInterceptor(baseOptions());
 	const before = makeCallArgs('hello');
@@ -136,6 +141,36 @@ test('before() mints a request proof under PROOF_META_KEY and sets the extension
 	await interceptor.before(before);
 	assert.ok(before.input.value.message.metadata[PROOF_META_KEY]);
 	assert.equal(before.options.serviceParameters['A2A-Extensions'], 'https://example.org/ext/proof');
+});
+
+test('a substituted Message result (not a Task) with no response proof REJECTS the call too (closes the non-Task-response bypass)', async () => {
+	// Regression test for the MEDIUM finding: before() the fix, after() returned early for
+	// any result with no `status` field (i.e. a Message, not a Task) without checking
+	// anything at all. A party able to answer in the server's place (a compromised proxy,
+	// TLS terminator, DNS hijack) could substitute an arbitrary, unproven Message for what
+	// should have been a proven Task, and this client accepted it silently.
+	const { interceptor, state } = createProofInterceptor(baseOptions());
+	const before = makeCallArgs('hello');
+	await interceptor.before(before);
+
+	await assert.rejects(
+		() => interceptor.after({ result: { method: 'sendMessage', value: messageResult(undefined) }, options: before.options }),
+		/A2A response proof verification failed/,
+	);
+	assert.equal(state.lastResponseCheck?.valid, false);
+});
+
+test('a Message result with a genuinely valid response proof resolves normally (the server now proves Message results too)', async (t) => {
+	const originalVerifyProof = ProofVerifier.prototype.verifyProof;
+	t.after(() => { ProofVerifier.prototype.verifyProof = originalVerifyProof; });
+	ProofVerifier.prototype.verifyProof = async () => ({ valid: true });
+
+	const { interceptor, state } = createProofInterceptor(baseOptions());
+	const before = makeCallArgs('hello');
+	await interceptor.before(before);
+
+	await interceptor.after({ result: { method: 'sendMessage', value: messageResult({ [RESPONSE_PROOF_META_KEY]: { fake: 'proof' } }) }, options: before.options });
+	assert.equal(state.lastResponseCheck?.valid, true);
 });
 
 test('a non-sendMessage method is left untouched by before() and after()', async () => {

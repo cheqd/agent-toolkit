@@ -11,7 +11,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import type { A2ARequestHandler, ServerCallContext } from '@a2a-js/sdk/server';
-import { Task } from '@a2a-js/sdk';
+import { Message, Task } from '@a2a-js/sdk';
 import { ExtensionSupportRequiredError, RequestMalformedError } from '@a2a-js/sdk/errors';
 import { ProofGenerator } from '@kya-os/mcp/proof';
 
@@ -92,12 +92,22 @@ export function withAgentIdentity(
 				return async (params: Parameters<A2ARequestHandler['sendMessage']>[0], ctx: ServerCallContext) => {
 					const caller = await enforce(ctx, trustExtension);
 					const result: unknown = await target.sendMessage(params, ctx);
+					if (!result) return result;
 					const resultObj = result as Record<string, unknown>;
-					if (!result || !('status' in resultObj)) return result; // a Message, not a Task - nothing to prove here yet
-					// The proof MUST be made over the JSON-safe wire form , not the
+					const isTask = 'status' in resultObj;
+					// Both a Task and a Message result get a response proof. A Message result used
+					// to pass through unsigned ("nothing to prove here yet") - but that let anyone
+					// who could answer in the server's place substitute an arbitrary, unproven
+					// Message for what should have been a proven Task, and the client (see
+					// client.ts's matching fix) had no way to tell. Proving every result closes that
+					// gap instead of special-casing it.
+					// The proof MUST be made over the JSON-safe wire form, not the
 					// SDK's typed object - which carries explicit `undefined` fields JCS can't
 					// canonicalize (found via the smoke test, not by inspection).
-					const json = Task.toJSON(result as never) as Record<string, unknown>;
+					const json = (isTask ? Task.toJSON(result as never) : Message.toJSON(result as never)) as Record<
+						string,
+						unknown
+					>;
 					const data = coveredResult(json as { metadata?: Record<string, unknown> });
 					const session = {
 						sessionId: 'a2a-stateless',

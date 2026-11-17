@@ -12,7 +12,10 @@ from google.protobuf.json_format import MessageToDict, ParseDict
 
 from a2a.types import Message, SendMessageRequest, Task
 from cheqd_agent_identity_a2a.client import ProofInterceptor, ProofInterceptorOptions
+from cheqd_agent_identity_a2a.covered_request import covered_request
 from cheqd_agent_identity_a2a.gate import AgentIdentityGate, GateEnforcementError, ResponseProofOptions
+from cheqd_agent_identity_a2a.proof.build import BuildProofContext, build_card_proof
+from cheqd_agent_identity_a2a.proof.canonical import CoveredRequest
 from cheqd_agent_identity_a2a.proof.response import ResponseProofIdentity
 from cheqd_agent_identity_a2a.proof.signer import ed25519_signer_from_jwk
 from cheqd_agent_identity_a2a.proof.verify import VerifyProofDeps
@@ -20,6 +23,7 @@ from cheqd_agent_identity_a2a.proto_bridge import (
     result_dict_to_proto,
     send_message_request_to_params,
     wrap_on_message_send,
+    wrap_on_message_send_stream,
 )
 
 CLIENT_DID = "did:web:client.example"
@@ -173,3 +177,110 @@ async def test_a_tampered_request_is_still_rejected_after_a_real_proto_round_tri
 def test_result_dict_to_proto_dispatches_on_status_key():
     assert isinstance(result_dict_to_proto({"id": "t1", "status": {"state": "TASK_STATE_COMPLETED"}}), Task)
     assert isinstance(result_dict_to_proto({"role": "ROLE_AGENT", "messageId": "m1"}), Message)
+
+
+async def test_wrap_on_message_send_stream_rejects_an_unproven_caller_before_the_handler_runs():
+    # Regression test for the HIGH finding: nothing in this package previously gated
+    # `on_message_send_stream` - `wrap_on_message_send`/`handle_send_message` only ever
+    # covered `SendMessage`. An integrator following only the provided bridge left
+    # `SendStreamingMessage` reaching the real handler/executor with no proof check at all.
+    # `wrap_on_message_send_stream` must reject an unauthenticated request before the real
+    # streaming handler - the executor - ever runs, exactly like `wrap_on_message_send` does
+    # for non-streaming requests.
+    _server_private_jwk, server_sk, _server_public_jwk = _ed25519_jwks()
+
+    async def resolve_key(_kid):
+        raise AssertionError("no proof was sent, so a key should never need resolving")
+
+    async def consume(_nonce, _did, _min_ttl):
+        return True
+
+    verify_deps = VerifyProofDeps(
+        resolve_key=resolve_key,
+        expected_audience=SERVER_DID,
+        consume_nonce_if_fresh=consume,
+        trust_resolve_key_authority=True,
+    )
+    gate = AgentIdentityGate(
+        verify_deps=verify_deps,
+        response_proof=ResponseProofOptions(
+            identity=ResponseProofIdentity(did=SERVER_DID, kid=SERVER_KID, private_key=server_sk)
+        ),
+    )
+
+    # No request-proof metadata at all - the real a2a-sdk wire round trip for a caller the
+    # userBuilder/gate never verified.
+    request_proto = _simulate_wire_roundtrip({"message": {"parts": [{"text": "hello"}]}})
+
+    handler_called = {"value": False}
+
+    async def real_on_message_send_stream(_request, _context):
+        handler_called["value"] = True
+        yield Message()  # pragma: no cover - must never actually run
+
+    with pytest.raises(GateEnforcementError) as exc_info:
+        async for _event in wrap_on_message_send_stream(
+            gate=gate,
+            request=request_proto,
+            context=None,
+            real_on_message_send_stream=real_on_message_send_stream,
+        ):
+            pass
+    assert exc_info.value.code == "proof_required"
+    assert handler_called["value"] is False
+
+
+async def test_wrap_on_message_send_stream_lets_a_verified_caller_reach_the_real_handler():
+    client_private_jwk, _client_sk, client_public_jwk = _ed25519_jwks()
+    _server_private_jwk, server_sk, _server_public_jwk = _ed25519_jwks()
+
+    client_signer = ed25519_signer_from_jwk(did=CLIENT_DID, kid=CLIENT_KID, private_jwk=client_private_jwk)
+
+    params = {"message": {"parts": [{"text": "hello"}]}}
+    covered = covered_request("SendStreamingMessage", params)
+    proof = await build_card_proof(
+        CoveredRequest(method=covered.method, params=covered.params),
+        client_signer,
+        BuildProofContext(audience=SERVER_DID, nonce="stream-nonce-1"),
+    )
+    params["message"]["metadata"] = {**proof}
+
+    async def resolve_key(kid):
+        assert kid == CLIENT_KID
+        return client_public_jwk
+
+    async def consume(_nonce, _did, _min_ttl):
+        return True
+
+    verify_deps = VerifyProofDeps(
+        resolve_key=resolve_key,
+        expected_audience=SERVER_DID,
+        consume_nonce_if_fresh=consume,
+        trust_resolve_key_authority=True,
+    )
+    gate = AgentIdentityGate(
+        verify_deps=verify_deps,
+        response_proof=ResponseProofOptions(
+            identity=ResponseProofIdentity(did=SERVER_DID, kid=SERVER_KID, private_key=server_sk)
+        ),
+    )
+
+    request_proto = _simulate_wire_roundtrip(params)
+
+    produced = []
+
+    async def real_on_message_send_stream(_request, _context):
+        produced.append("ran")
+        yield Message()
+
+    events = [
+        event
+        async for event in wrap_on_message_send_stream(
+            gate=gate,
+            request=request_proto,
+            context=None,
+            real_on_message_send_stream=real_on_message_send_stream,
+        )
+    ]
+    assert produced == ["ran"]
+    assert len(events) == 1

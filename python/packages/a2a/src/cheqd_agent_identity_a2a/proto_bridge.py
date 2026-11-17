@@ -35,7 +35,7 @@ SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Union
 
 from a2a.types import Message, SendMessageRequest, Task
 from google.protobuf.json_format import MessageToDict, ParseDict
@@ -97,3 +97,35 @@ async def wrap_on_message_send(
 
     result_dict = await gate.handle_send_message("SendMessage", params_dict, call_through)
     return result_dict_to_proto(result_dict)
+
+
+async def wrap_on_message_send_stream(
+    *,
+    gate: "AgentIdentityGate",
+    request: SendMessageRequest,
+    context: "ServerCallContext",
+    real_on_message_send_stream: Callable[[SendMessageRequest, "ServerCallContext"], AsyncIterator[Any]],
+) -> AsyncIterator[Any]:
+    """The drop-in replacement for a real `a2a-sdk` `RequestHandler.on_message_send_stream` -
+    the streaming counterpart of `wrap_on_message_send`, and the Python equivalent of
+    TypeScript's `wrapper.ts` gating of `sendMessageStream`.
+
+    **The HIGH finding this closes**: nothing in this package previously gated
+    `on_message_send_stream`. `wrap_on_message_send`/`AgentIdentityGate.handle_send_message`
+    only ever covered `on_message_send` (`SendMessage`), so an integrator following only the
+    provided bridge left `SendStreamingMessage` (REST `message:stream`, JSON-RPC) reaching the
+    real handler - and the real executor - with no proof check at all, even though
+    `gate.py`'s own `WRITE_METHODS` already listed `SendStreamingMessage` as a write method.
+
+    Verifies and enforces the request proof over the incoming `SendMessageRequest` via
+    `gate.verify_and_enforce` BEFORE `real_on_message_send_stream` is ever called - so for a
+    rejected caller, the real handler/executor never runs and no event is yielded, matching
+    this programme's gate-ordering requirement (see `AgentIdentityGate`'s own docstring and
+    docs/design-decisions.md D1). Like `wrapper.ts`'s `sendMessageStream`, makes NO response
+    proof over the stream: a stream of events has no single final result to sign, by
+    construction, not convention.
+    """
+    params_dict = send_message_request_to_params(request)
+    await gate.verify_and_enforce("SendStreamingMessage", params_dict)
+    async for event in real_on_message_send_stream(request, context):
+        yield event
