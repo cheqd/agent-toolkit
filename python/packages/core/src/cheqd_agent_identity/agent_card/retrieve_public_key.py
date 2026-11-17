@@ -14,12 +14,33 @@ Fails closed - raises `KeyResolutionError`, never anything else - on: an unsuppo
 method, a malformed DID, `kid` not matching `expected_did` (when given), a `kid` the resolved
 document does not publish, transport failure, invalid JSON, or a malformed DID document.
 
+Two hardening points on the `did:web` path, both found by review:
+
+- The default fetch has a bounded size (`DID_WEB_MAX_RESPONSE_BYTES`) and an explicit timeout
+  (`DID_WEB_FETCH_TIMEOUT_MS`): `httpx`'s own default timeout (5s) already bounds a hung
+  connection somewhat, but nothing previously bounded response SIZE - a malicious or merely
+  compromised `did:web` host streaming an endless body would be read in full by `response.json()`.
+- The decoded host segment of a `did:web` identifier is validated against `_VALID_DID_WEB_HOST`
+  before being used to build the fetch URL. The DID Web Method encodes a non-default port as
+  `%3A<port>` in the first segment (e.g. `did:web:example.com%3A3000` -> host `example.com:3000`)
+  - legitimate and preserved. But nothing before this validation stopped a segment decoding to
+  something like `trusted.example%3A443%40attacker.example` -> `trusted.example:443@attacker.example`,
+  which a real HTTP client sends to `attacker.example` (the part before an unescaped `@` is
+  userinfo, not part of the host) while the raw, undecoded `did:web:...` string still reads as
+  if it names `trusted.example`. The attacker, who controls that host, can trivially serve a
+  `did.json` whose `id` field matches the exact undecoded DID string, passing the existing
+  `parsed.id != did` check - this is a genuine SSRF/host-confusion path, not merely a cosmetic
+  one. Restricting the decoded host to DNS-safe characters plus an optional numeric port closes
+  it while keeping the documented port syntax working.
+
 SPDX-License-Identifier: Apache-2.0
 """
 
 from __future__ import annotations
 
 import base64
+import json
+import re
 import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping, Optional, Protocol, Sequence
@@ -27,6 +48,19 @@ from typing import Any, Awaitable, Callable, Mapping, Optional, Protocol, Sequen
 import httpx
 
 PublicKeyJwk = dict[str, Any]
+
+# 10s - generous for a DID document fetch, short enough that a hung/stalled connection cannot
+# block a caller indefinitely.
+DID_WEB_FETCH_TIMEOUT_MS = 10_000
+# 1 MiB - far larger than any real DID document, far smaller than what would meaningfully
+# threaten memory on an endless or malicious response body.
+DID_WEB_MAX_RESPONSE_BYTES = 1_048_576
+
+# DNS-safe host characters plus the DID Web Method's documented `%3A<port>` port syntax -
+# nothing else. In particular this rejects a decoded host containing `@`, `/`, or any other
+# character that could make a real HTTP client send the request to a different host than the
+# one the raw, undecoded DID string appears to name - see the module doc comment.
+_VALID_DID_WEB_HOST = re.compile(r"^[a-zA-Z0-9.-]+(:[0-9]{1,5})?$")
 
 BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 BASE58_ALPHABET_MAP = {char: index for index, char in enumerate(BASE58_ALPHABET)}
@@ -65,9 +99,33 @@ FetchDidWebDocument = Callable[[str], Awaitable[DidWebResponse]]
 ResolveDidCheqd = Callable[[str], Awaitable[Optional[MinimalDidDocument]]]
 
 
+@dataclass(frozen=True)
+class _BufferedDidWebResponse:
+    """A `DidWebResponse` already fully (and boundedly) read into memory, decoupling the
+    `json()` call from the network - by the time this exists, the byte cap has already been
+    enforced.
+    """
+
+    status_code: int
+    _body: bytes
+
+    def json(self) -> Any:
+        return json.loads(self._body)
+
+
 async def _default_fetch_did_web(url: str) -> DidWebResponse:
-    async with httpx.AsyncClient() as client:
-        return await client.get(url)
+    timeout = httpx.Timeout(DID_WEB_FETCH_TIMEOUT_MS / 1000)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        async with client.stream("GET", url) as response:
+            content_length = response.headers.get("content-length")
+            if content_length is not None and int(content_length) > DID_WEB_MAX_RESPONSE_BYTES:
+                raise ValueError("did_web_response_too_large")
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > DID_WEB_MAX_RESPONSE_BYTES:
+                    raise ValueError("did_web_response_too_large")
+            return _BufferedDidWebResponse(status_code=response.status_code, _body=bytes(body))
 
 
 def create_retrieve_public_key(
@@ -161,6 +219,8 @@ def _did_web_to_url(did: str) -> str:
             _fail("malformed_did_web")
     host = segments[0] if segments else ""
     if len(host) == 0:
+        _fail("malformed_did_web")
+    if not _VALID_DID_WEB_HOST.match(host):
         _fail("malformed_did_web")
     path = segments[1:]
     if not path:

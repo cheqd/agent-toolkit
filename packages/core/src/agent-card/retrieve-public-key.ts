@@ -16,6 +16,26 @@
  * method, a malformed DID, `kid` not matching `expectedDid` (when given), a `kid` the resolved
  * document does not publish, transport failure, invalid JSON, or a malformed DID document.
  *
+ * Two hardening points on the `did:web` path, both found by review:
+ *
+ * - The default fetch has a bounded size (`DID_WEB_MAX_RESPONSE_BYTES`) and timeout
+ *   (`DID_WEB_FETCH_TIMEOUT_MS`): an unbounded `fetch().json()` lets a malicious or merely
+ *   compromised `did:web` host exhaust memory with an endless response body, or hang a caller
+ *   indefinitely with a connection that never completes.
+ * - The decoded host segment of a `did:web` identifier is validated against
+ *   `VALID_DID_WEB_HOST` before being used to build the fetch URL. The DID Web Method encodes
+ *   a non-default port as `%3A<port>` in the first segment (e.g. `did:web:example.com%3A3000`
+ *   -> host `example.com:3000`) - legitimate and preserved. But nothing before this validation
+ *   stopped a segment decoding to something like `trusted.example%3A443%40attacker.example` ->
+ *   `trusted.example:443@attacker.example`, which a real HTTP client sends to `attacker.example`
+ *   (the part before an unescaped `@` is userinfo, not part of the host) while the raw,
+ *   undecoded `did:web:...` string still reads as if it names `trusted.example`. The attacker,
+ *   who controls that host, can trivially serve a `did.json` whose `id` field matches the exact
+ *   undecoded DID string, passing the existing `document.id !== did` check - this is a genuine
+ *   SSRF/host-confusion path, not merely a cosmetic one. Restricting the decoded host to DNS-safe
+ *   characters plus an optional numeric port closes it while keeping the documented port syntax
+ *   working.
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -91,9 +111,53 @@ export function createRetrievePublicKey(
 	};
 }
 
-async function defaultFetchDidWeb(url: string) {
-	return fetch(url);
+/** 10s - generous for a DID document fetch, short enough that a hung/stalled connection cannot
+ * block a caller indefinitely. */
+const DID_WEB_FETCH_TIMEOUT_MS = 10_000;
+/** 1 MiB - far larger than any real DID document, far smaller than what would meaningfully
+ * threaten memory on an endless or malicious response body. */
+const DID_WEB_MAX_RESPONSE_BYTES = 1_048_576;
+
+async function defaultFetchDidWeb(url: string): Promise<{ status: number; json(): Promise<unknown> }> {
+	const response = await fetch(url, { signal: AbortSignal.timeout(DID_WEB_FETCH_TIMEOUT_MS) });
+	const text = await readBoundedText(response, DID_WEB_MAX_RESPONSE_BYTES);
+	return {
+		status: response.status,
+		async json() {
+			return JSON.parse(text);
+		},
+	};
 }
+
+/** Reads `response`'s body as UTF-8 text, throwing if it exceeds `maxBytes` - checked against
+ * `Content-Length` up front (fast path) and against actual bytes read as they arrive (an
+ * attacker can omit or lie about `Content-Length`). */
+async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+	const contentLength = response.headers.get('content-length');
+	if (contentLength !== null && Number(contentLength) > maxBytes) throw new Error('did_web_response_too_large');
+	if (!response.body) return '';
+	const reader = response.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			total += value.byteLength;
+			if (total > maxBytes) throw new Error('did_web_response_too_large');
+			chunks.push(value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString('utf8');
+}
+
+/** DNS-safe host characters plus the DID Web Method's documented `%3A<port>` port syntax -
+ * nothing else. In particular this rejects a decoded host containing `@`, `/`, or any other
+ * character that could make a real HTTP client send the request to a different host than the
+ * one the raw, undecoded DID string appears to name - see the class doc comment. */
+const VALID_DID_WEB_HOST = /^[a-zA-Z0-9.-]+(:[0-9]{1,5})?$/;
 
 /** Exported for reuse by other modules that already hold a resolved DID document and a `kid`
  * (e.g. `@cheqd/agent-identity-ap2`'s generic DataIntegrityProof verifier) - avoids re-deriving
@@ -153,6 +217,7 @@ function didWebToUrl(did: string): string {
 	});
 	const host = segments[0];
 	if (host === undefined || host.length === 0) fail('malformed_did_web');
+	if (!VALID_DID_WEB_HOST.test(host)) fail('malformed_did_web');
 	const path = segments.slice(1);
 	return path.length === 0
 		? `https://${host}/.well-known/did.json`

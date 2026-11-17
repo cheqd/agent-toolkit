@@ -116,6 +116,96 @@ test('a did:web document whose id does not match the requested DID is rejected',
 	await assert.rejects(() => retrieve(`${did}#key-1`));
 });
 
+test('did:web host with a percent-encoded port resolves to host:port (DID Web Method)', async () => {
+	const did = 'did:web:example.com%3A3000';
+	let fetchedUrl;
+	const fetchDidWebDocument = async (url) => {
+		fetchedUrl = url;
+		return { status: 200, async json() { return { id: did, verificationMethod: [] }; } };
+	};
+	const retrieve = createRetrievePublicKey({ fetchDidWebDocument });
+	await assert.rejects(() => retrieve(`${did}#key-1`)); // no matching method; the URL build is what's under test
+	assert.equal(fetchedUrl, 'https://example.com:3000/.well-known/did.json');
+});
+
+// Regression: the decoded host segment used to be inserted into the fetch URL with no
+// validation. `%3A443%40` decodes to `:443@`, so this DID's "host" segment becomes
+// `trusted.example:443@attacker.example` - a real HTTP client (per URL authority syntax) sends
+// the request to attacker.example, treating everything before the unescaped `@` as userinfo,
+// while the raw DID string still reads as if it names trusted.example. Confirm the attack is
+// mechanically real (the resulting URL's actual host is attacker.example, not trusted.example),
+// then confirm the fix rejects it before ever attempting a fetch.
+test('a did:web host that decodes to an authority-confusing string (userinfo "@") is rejected before any fetch', async () => {
+	const confusingUrl = 'https://trusted.example:443@attacker.example/.well-known/did.json';
+	assert.equal(new URL(confusingUrl).hostname, 'attacker.example'); // the attack is real: this is who actually gets contacted
+
+	const did = 'did:web:trusted.example%3A443%40attacker.example';
+	let fetchCalled = false;
+	const fetchDidWebDocument = async () => {
+		fetchCalled = true;
+		return { status: 200, async json() { return {}; } };
+	};
+	const retrieve = createRetrievePublicKey({ fetchDidWebDocument });
+	await assert.rejects(() => retrieve(`${did}#key-1`));
+	assert.equal(fetchCalled, false, 'must reject before ever attempting to fetch the attacker-controlled host');
+});
+
+test('a did:web host that decodes to a path-like string ("/") is rejected before any fetch', async () => {
+	const did = 'did:web:example.com%2Fattacker.example';
+	let fetchCalled = false;
+	const fetchDidWebDocument = async () => {
+		fetchCalled = true;
+		return { status: 200, async json() { return {}; } };
+	};
+	const retrieve = createRetrievePublicKey({ fetchDidWebDocument });
+	await assert.rejects(() => retrieve(`${did}#key-1`));
+	assert.equal(fetchCalled, false);
+});
+
+// Both size-cap tests below use a document that is otherwise entirely well-formed and would
+// resolve successfully if read in full (padded past the 1 MiB cap with an extra field) - not a
+// malformed or truncated one. This is deliberate: it isolates the size cap as the only possible
+// reason for rejection. A test using a too-small or malformed oversized body would "pass" even
+// against the pre-fix code for the wrong reason (rejected for being malformed, not for being
+// too large) - exactly the false-positive this shape rules out.
+function oversizedButOtherwiseValidDidWebDocument(did, kid, jwkX) {
+	return JSON.stringify({
+		id: did,
+		verificationMethod: [{ id: kid, controller: did, publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: jwkX } }],
+		padding: 'x'.repeat(2 * 1024 * 1024), // pushes the whole JSON body to ~2 MiB, over the 1 MiB cap
+	});
+}
+
+test('the default did:web fetch rejects an oversized response even when its Content-Length is accurate', async () => {
+	const { jwkX } = rawEd25519PublicKey();
+	const did = 'did:web:example.com';
+	const kid = `${did}#key-1`;
+	const body = oversizedButOtherwiseValidDidWebDocument(did, kid, jwkX);
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = async () => new Response(body, { status: 200, headers: { 'content-length': String(body.length) } });
+	try {
+		const retrieve = createRetrievePublicKey();
+		await assert.rejects(() => retrieve(kid));
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
+test('the default did:web fetch rejects an oversized response with no (or a lying, too-small) Content-Length, by counting actual bytes read', async () => {
+	const { jwkX } = rawEd25519PublicKey();
+	const did = 'did:web:example.com';
+	const kid = `${did}#key-1`;
+	const body = oversizedButOtherwiseValidDidWebDocument(did, kid, jwkX);
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = async () => new Response(body, { status: 200 }); // no content-length header at all
+	try {
+		const retrieve = createRetrievePublicKey();
+		await assert.rejects(() => retrieve(kid));
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
 test('a did:web fetch failure (non-200) is rejected, not treated as no key', async () => {
 	const did = 'did:web:example.com';
 	const fetchDidWebDocument = async () => ({ status: 404, async json() { return {}; } });
