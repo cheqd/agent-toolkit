@@ -14,17 +14,39 @@
  * `NonceCacheProvider` directly over whatever shared store you already run (a KV store, a
  * database) instead of reaching for this.
  *
- * The one case this cannot resolve atomically: a caller claims an EXPIRED file left by a previous
- * claim. Reading the expiry and then deleting-and-recreating is two steps, so two callers can both
- * observe "expired" and both attempt to reclaim it; one `wx` wins, the other correctly sees
- * `EEXIST` and is told `false` for that attempt even though the slot is free again. This fails
- * CLOSED (a legitimate nonce reuse after expiry is occasionally rejected, never a replay
- * incorrectly accepted), which is the safe direction to be wrong in for a replay cache.
+ * Reclaiming an EXPIRED file left by a previous claim is the one case needing care: reading the
+ * expiry and then replacing the file is two steps, so two callers can both observe "expired" at
+ * the same moment. `consume()` therefore serializes its ENTIRE body - including the initial
+ * exclusive-create attempt - through an in-process queue keyed by `(agentDid, nonce)` (the same
+ * `enqueue`-per-key pattern `@cheqd/agent-identity-ap2`'s `mandate-consumption-store.ts` uses for
+ * `recordUse`): at most one `consume()` call for a given key runs its body at a time WITHIN this
+ * process. That closes the race for every caller sharing this `FileNonceCacheProvider` instance,
+ * which is what the two concurrency scenarios that matter in practice - multiple in-flight
+ * requests in one server process, and this module's own test suite - actually exercise.
+ *
+ * Found by review: an earlier version used a plain `rm()` then `open(path, 'wx')` to reclaim an
+ * expired file, with no serialization at all. Caller A's `rm()` could run, caller A's
+ * `open('wx')` could succeed and write a FRESH, valid, non-expired record, and only THEN caller
+ * B's own (concurrently in-flight) `rm()` for the same path could run and delete that fresh
+ * record A just wrote - clearing the way for B's own `open('wx')` to also succeed. A follow-up
+ * attempt replaced the `rm()` with a `rename()`-based atomic claim step (relying on `rename()`'s
+ * single-winner semantics on one source path) but WITHOUT the per-key queue below; that still
+ * raced, just one step later: caller D could read the file, observe "expired" via `isReclaimable`,
+ * and only THEN - after caller A had already renamed the old file away and created its own fresh,
+ * live record at the same path - have its own `rename()` succeed, because `rename()` only checks
+ * that a source path exists, not that the thing at it is still the stale snapshot D examined. D's
+ * rename would silently steal A's brand-new live record out from under it. Both bugs are read-
+ * then-act races; serializing the whole operation per key removes the "then-act" step's exposure
+ * to any other caller entirely, rather than trying to make each individual filesystem call atomic
+ * against every other individual call. The `rename()`-based reclaim is kept as defense in depth
+ * for genuinely separate OS processes sharing this directory, which the in-process queue cannot
+ * help: `rename()` on the same source path is still atomic across processes, so at most one
+ * process's reclaim of a given expired file can win even without the queue.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-import { createHash } from 'node:crypto';
-import { mkdir, open, readFile, readdir, rm } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { NonceCacheProvider } from '@kya-os/mcp/providers';
 
@@ -43,11 +65,25 @@ export class FileNonceCacheProvider extends NonceCacheProvider {
 	private readonly directory: string;
 	private readonly now: () => number;
 	private ready: Promise<void> | undefined;
+	// Per-(agentDid, nonce) in-process serialization for consume()'s read-reclaim-create sequence
+	// - see the class doc comment for why the whole body, not just the filesystem calls, must be
+	// serialized.
+	private readonly queues = new Map<string, Promise<unknown>>();
 
 	constructor(options: FileNonceCacheOptions) {
 		super();
 		this.directory = options.directory;
 		this.now = options.now ?? Date.now;
+	}
+
+	private enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
+		const prior = this.queues.get(key) ?? Promise.resolve();
+		const next = prior.then(task, task);
+		this.queues.set(
+			key,
+			next.catch(() => undefined),
+		);
+		return next;
 	}
 
 	private async ensureDirectory(): Promise<void> {
@@ -65,6 +101,10 @@ export class FileNonceCacheProvider extends NonceCacheProvider {
 	async consume(nonce: string, ttlSeconds: number, agentDid?: string): Promise<boolean> {
 		await this.ensureDirectory();
 		const path = this.pathFor(nonce, agentDid);
+		return this.enqueue(path, () => this.consumeLocked(path, ttlSeconds));
+	}
+
+	private async consumeLocked(path: string, ttlSeconds: number): Promise<boolean> {
 		const record: Record_ = { expiresAt: this.now() + ttlSeconds * 1000 };
 		try {
 			const handle = await open(path, 'wx');
@@ -84,8 +124,18 @@ export class FileNonceCacheProvider extends NonceCacheProvider {
 		// direction for a replay cache is to assume it is still live when its expiry can't be read,
 		// not to assume it is gone and let the slot be reused.
 		if (!(await this.isReclaimable(path))) return false;
+		// Claim the expired slot by moving it aside first - see the class doc comment for why
+		// this, not a plain rm() then open('wx'), is the atomic step. Only the caller whose
+		// rename succeeds proceeds to create the fresh record.
+		const claimPath = `${path}.reclaim-${randomBytes(8).toString('hex')}`;
 		try {
-			await rm(path, { force: true });
+			await rename(path, claimPath);
+		} catch (error) {
+			if (isEnoent(error)) return false; // another caller already claimed (or cleared) this slot
+			throw error;
+		}
+		await rm(claimPath, { force: true });
+		try {
 			const handle = await open(path, 'wx');
 			try {
 				await handle.writeFile(JSON.stringify(record));
@@ -94,6 +144,8 @@ export class FileNonceCacheProvider extends NonceCacheProvider {
 			}
 			return true;
 		} catch (error) {
+			// A third caller's brand-new (non-reclaim) consume() of this same nonce could have
+			// won the path in between our rename and our open - its record is now the live one.
 			if (isEexist(error)) return false;
 			throw error;
 		}

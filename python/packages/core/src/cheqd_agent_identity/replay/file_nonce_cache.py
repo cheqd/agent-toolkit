@@ -8,12 +8,30 @@ filesystem, not this module, decides which of two concurrent callers wins. This 
 race-free behaviour for concurrent callers on ONE filesystem - it is not a distributed lock
 across independent storage backends.
 
-The one case this cannot resolve atomically: a caller claims an EXPIRED file left by a previous
-claim. Reading the expiry and then deleting-and-recreating is two steps, so two callers can both
-observe "expired" and both attempt to reclaim it; one `O_EXCL` wins, the other correctly sees
-`FileExistsError` and is told `False` for that attempt even though the slot is free again. This
-fails CLOSED (a legitimate nonce reuse after expiry is occasionally rejected, never a replay
-incorrectly accepted), which is the safe direction to be wrong in for a replay cache.
+Reclaiming an EXPIRED file left by a previous claim is the one case needing care: reading the
+expiry and then replacing the file is two steps, so two callers can both observe "expired" at
+the same moment. `consume()` therefore serializes its ENTIRE body - including the initial
+exclusive-create attempt - through an in-process `asyncio.Lock` keyed by `(agent_did, nonce)`
+(the same per-key-lock pattern `cheqd_agent_identity_ap2`'s `mandate_consumption_store.py` uses
+for `record_use`): at most one `consume()` call for a given key runs its body at a time WITHIN
+this process. That closes the race for every caller sharing this `FileNonceCacheProvider`
+instance, which is what the two concurrency scenarios that matter in practice - multiple
+in-flight requests in one server process, and this module's own test suite - actually exercise.
+
+Found by review: an earlier version read the expiry, then did `path.unlink()` followed by
+`os.open(path, O_CREAT | O_EXCL)`, with no serialization at all. Caller A's `unlink()` could run,
+caller A's `open()` could succeed and write a FRESH, valid, non-expired record, and only THEN
+caller B's own (concurrently in-flight) `unlink()` for the same path could run and delete that
+fresh record A just wrote - clearing the way for B's own `open()` to also succeed. The reclaim
+step below uses `os.rename()` to atomically claim the expired file (rather than deleting it)
+before creating the fresh record, as defense in depth for genuinely separate OS processes
+sharing this directory, which the in-process lock cannot help: `rename()` on the same source
+path is still atomic across processes, so at most one process's reclaim of a given expired file
+can win even without the lock. But `rename()` alone, without the lock, is not sufficient: it
+only checks that the source path exists, not that the thing at it is still the stale snapshot a
+caller examined - a second caller could still rename away a different caller's brand-new live
+record. The lock removes that exposure entirely for in-process callers, which is why both pieces
+are kept.
 
 SPDX-License-Identifier: Apache-2.0
 """
@@ -25,6 +43,7 @@ import hashlib
 import json
 import math
 import os
+import secrets
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +63,10 @@ class FileNonceCacheProvider(NonceCacheProvider):
         self._now = now or (lambda: time.time() * 1000)
         self._ready = False
         self._ready_lock = asyncio.Lock()
+        # Per-(agent_did, nonce) in-process serialization for consume()'s read-reclaim-create
+        # sequence - see the module doc comment for why the whole body, not just the individual
+        # filesystem calls, must be serialized.
+        self._locks: dict[str, asyncio.Lock] = {}
 
     async def _ensure_directory(self) -> None:
         if self._ready:
@@ -54,6 +77,13 @@ class FileNonceCacheProvider(NonceCacheProvider):
             await asyncio.to_thread(self._directory.mkdir, parents=True, exist_ok=True)
             self._ready = True
 
+    def _lock_for(self, key: str) -> asyncio.Lock:
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[key] = lock
+        return lock
+
     def _path_for(self, nonce: str, agent_did: Optional[str] = None) -> Path:
         # Hash rather than use the nonce/DID directly as a filename: both are attacker-
         # influenced, and neither is safe as a raw path segment.
@@ -63,16 +93,17 @@ class FileNonceCacheProvider(NonceCacheProvider):
     async def consume(self, nonce: str, ttl_seconds: int, agent_did: Optional[str] = None) -> bool:
         await self._ensure_directory()
         path = self._path_for(nonce, agent_did)
-        record = _Record(expires_at=self._now() + ttl_seconds * 1000)
-        if await asyncio.to_thread(self._try_create, path, record):
-            return True
-        # The file exists. If it has expired, try once to reclaim it - see the module doc
-        # comment for why this one retry is not itself atomic, and why that is the safe failure
-        # direction. A record that exists but cannot be parsed is treated the same as "not
-        # expired" (blocks reclaim).
-        if not await self._is_reclaimable(path):
-            return False
-        return await asyncio.to_thread(self._reclaim, path, record)
+        async with self._lock_for(str(path)):
+            record = _Record(expires_at=self._now() + ttl_seconds * 1000)
+            if await asyncio.to_thread(self._try_create, path, record):
+                return True
+            # The file exists. If it has expired, try once to reclaim it - see the module doc
+            # comment for why the lock above, not this check alone, is what makes the reclaim
+            # safe. A record that exists but cannot be parsed is treated the same as "not
+            # expired" (blocks reclaim).
+            if not await self._is_reclaimable(path):
+                return False
+            return await asyncio.to_thread(self._reclaim, path, record)
 
     @staticmethod
     def _try_create(path: Path, record: _Record) -> bool:
@@ -88,10 +119,19 @@ class FileNonceCacheProvider(NonceCacheProvider):
 
     @staticmethod
     def _reclaim(path: Path, record: _Record) -> bool:
+        # Claim the expired slot by moving it aside first - see the module doc comment for why
+        # this, not a plain unlink() then open(), is the atomic step for cross-process safety.
+        claim_path = path.with_name(f"{path.name}.reclaim-{secrets.token_hex(8)}")
         try:
-            path.unlink(missing_ok=True)
+            os.rename(path, claim_path)
+        except FileNotFoundError:
+            return False  # another caller already claimed (or cleared) this slot
+        claim_path.unlink(missing_ok=True)
+        try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
+            # A third caller's brand-new (non-reclaim) consume() of this same nonce could have
+            # won the path in between our rename and our open - its record is now the live one.
             return False
         try:
             os.write(fd, json.dumps({"expiresAt": record.expires_at}).encode("utf-8"))
