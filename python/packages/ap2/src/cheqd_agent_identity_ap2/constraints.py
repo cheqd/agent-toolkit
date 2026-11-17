@@ -222,7 +222,19 @@ def _evaluate_payment_constraint(
 
 
 def _amount_equals(a: dict, b: dict) -> bool:
-    return a["amount"] == b["amount"] and a["currency"] == b["currency"]
+    """`payment_amount["amount"]` in the closed mandate is holder-controlled, and a bare `==`
+    lets Python's bool/int aliasing slip a type confusion through here: `bool` is a subclass of
+    `int`, so `1 == True` is `True`, and a closed mandate carrying `amount: True` would match a
+    pre-set amount of `1` via `check_preset_payment_claims` even though it is not the number `1`
+    at all. This is the only check on `payment_amount` equality when no `amount_range`/`budget`
+    constraint is present to catch it via `_valid_amount`. Require the concrete numeric type on
+    both sides - `isinstance(x, int)` is not enough, since it is `True` for booleans too.
+    """
+    a_amount = a["amount"]
+    b_amount = b["amount"]
+    if type(a_amount) not in (int, float) or type(b_amount) not in (int, float):
+        return False
+    return a_amount == b_amount and a["currency"] == b["currency"]
 
 
 def _instrument_equals(a: PaymentInstrument, b: PaymentInstrument) -> bool:

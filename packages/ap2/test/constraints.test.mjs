@@ -189,3 +189,25 @@ test('an unmatched payment constraint type throws explicitly, rather than crashi
 	const open = openMandate([{ type: 'payment.not_a_real_constraint' }]);
 	assert.throws(() => checkPaymentConstraints(open, BASE_PAYMENT), /unknown_payment_constraint_type/);
 });
+
+// Regression: a holder-controlled closed mandate's execution_date used to need no particular
+// type at runtime (string is a TS type, erased at runtime). Mixed-type relational comparisons
+// (`<`/`>`) coerce both sides to Number rather than doing a string comparison, so a numeric
+// execution_date compared against string window bounds was always NaN-vs-NaN (false), and the
+// constraint silently produced no violations.
+test('execution_date: a non-string execution_date is a violation, not silently accepted', () => {
+	const open = openMandate([{ type: 'payment.execution_date', not_before: '2027-01-01', not_after: '2027-12-31' }]);
+	const malformed = { ...BASE_PAYMENT, execution_date: 20300101 };
+	const violations = checkPaymentConstraints(open, malformed);
+	assert.ok(violations.length > 0, 'a non-string execution_date must produce at least one violation');
+});
+
+// Regression: a malformed-but-string execution_date (not a real, parseable date) could still
+// sort lexicographically "inside" the allowed window even though it isn't a valid date at all,
+// so raw string comparison let it through with no violations.
+test('execution_date: a malformed date string is a violation, not silently accepted', () => {
+	const open = openMandate([{ type: 'payment.execution_date', not_before: '2027-01-01', not_after: '2027-12-31' }]);
+	const malformed = { ...BASE_PAYMENT, execution_date: '2027-06-99' };
+	const violations = checkPaymentConstraints(open, malformed);
+	assert.ok(violations.length > 0, 'a malformed execution_date string must produce at least one violation');
+});

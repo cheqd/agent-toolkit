@@ -227,3 +227,20 @@ def test_an_unmatched_payment_constraint_type_raises_explicitly_rather_than_fail
     open_ = open_mandate([{"type": "payment.not_a_real_constraint"}])
     with pytest.raises(ValueError, match="unknown_payment_constraint_type"):
         check_payment_constraints(open_, BASE_PAYMENT)
+
+
+# Regression: `_amount_equals` used a bare `==`, and Python's `bool` is a subclass of `int`
+# where `1 == True`, so a closed mandate carrying `payment_amount["amount"]: True` would match
+# a pre-set amount of `1` via `check_preset_payment_claims` even though it isn't the number `1`
+# at all - a type-confusion bypass of the only amount check in play when no
+# amount_range/budget constraint exists to catch it via `_valid_amount`.
+def test_preset_amount_a_boolean_amount_does_not_type_confuse_as_equal_to_one():
+    open_ = open_mandate(
+        [{"type": "payment.allowed_payees", "allowed": [MERCHANT]}],
+        payment_amount={"amount": 1, "currency": "USD"},
+    )
+    malformed = {**BASE_PAYMENT, "payment_amount": {"amount": True, "currency": "USD"}}
+    violations = check_payment_constraints(open_, malformed)
+    assert any("Pre-set amount mismatch" in v for v in violations), (
+        "a boolean amount must never type-confuse as equal to a numeric pre-set amount"
+    )
