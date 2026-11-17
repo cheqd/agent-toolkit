@@ -64,13 +64,13 @@ async def test_a_client_minted_proof_survives_a_real_proto_round_trip_and_verifi
             extension_uri="https://cheqd.io/a2a/ext/trust/v1",
         )
     )
-    params, _headers = await interceptor.before("SendMessage", {"message": {"parts": [{"text": "hello"}]}})
+    call = await interceptor.before("SendMessage", {"message": {"parts": [{"text": "hello"}]}})
 
     # The client's own proof is minted over plain-dict `params` with real ints for
     # created/expires. Simulate what actually happens on the wire: a real SendMessageRequest
     # proto round trip (Struct turns those ints into doubles) before the server-side gate
     # ever sees the params dict again.
-    request_proto = _simulate_wire_roundtrip(params)
+    request_proto = _simulate_wire_roundtrip(call.params)
     assert isinstance(request_proto, SendMessageRequest)
     server_side_params = send_message_request_to_params(request_proto)
     created = server_side_params["message"]["metadata"]["org.kya-os/request-proof"]["created"]
@@ -117,7 +117,7 @@ async def test_a_client_minted_proof_survives_a_real_proto_round_trip_and_verifi
 
     # And the client's own verification survives the same real proto round trip on the way
     # back (the dispatcher's own MessageToDict(SendMessageResponse(task=...)) call).
-    await interceptor.after("SendMessage", result_dict)
+    await interceptor.after("SendMessage", result_dict, call)
     assert interceptor.state.last_response_check.valid is True
 
 
