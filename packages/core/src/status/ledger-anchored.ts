@@ -230,7 +230,14 @@ async function checkOne(
     if (declared !== undefined && declared !== 1) fail('unsupported_status_size');
   }
   const until = credential['validUntil'] ?? credential['expirationDate'];
-  if (until !== undefined && (typeof until !== 'string' || Date.parse(until) <= now())) fail('list_expired');
+  if (until !== undefined) {
+    // Date.parse(until) is NaN for an unparseable string, and every comparison against NaN is
+    // false - so `Date.parse(until) <= now()` alone would fail OPEN (treated as not-yet-expired)
+    // for a malformed validUntil, contradicting this module's own fail-closed invariant. Treat
+    // "cannot be parsed" the same as "cannot be read": reject rather than treat as still valid.
+    const parsed = typeof until === 'string' ? Date.parse(until) : Number.NaN;
+    if (Number.isNaN(parsed) || parsed <= now()) fail('list_expired');
+  }
 
   // 4. The bit.
   const encoded = subject['encodedList'];

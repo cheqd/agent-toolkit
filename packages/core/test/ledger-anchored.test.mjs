@@ -182,6 +182,14 @@ test('an expired list is rejected', async () => {
   rejected(await check(world({ credential: { validUntil: '2026-10-01T00:00:00Z' } })), 'list_expired');
 });
 
+// Regression: Date.parse(until) is NaN for an unparseable string, and every comparison against
+// NaN is false - so the old `Date.parse(until) <= now()` check alone failed OPEN (treated as
+// not-yet-expired) for a malformed validUntil, contradicting this module's own fail-closed
+// invariant ("every unreadable ... case returns ok: false").
+test('a validUntil that cannot be parsed is rejected, not treated as still valid', async () => {
+  rejected(await check(world({ credential: { validUntil: 'not-a-date' } })), 'list_expired');
+});
+
 test('invalid JSON is rejected', async () => {
   const w = world();
   const bytes = Buffer.from('not json');
