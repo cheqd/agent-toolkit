@@ -11,6 +11,7 @@ python = "^3.12"
 cheqd-agent-identity = { path = "../core", develop = true }
 sd-jwt = "^0.10.4"
 jwcrypto = "^1.6.1"
+rfc8785 = "^0.1.4"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "0.12.8"
