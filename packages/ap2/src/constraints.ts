@@ -31,9 +31,28 @@ export function merchantMatches(candidate: Merchant, target: Merchant): boolean 
 	return Boolean(candidate.name) && candidate.name === target.name && Boolean(candidate.website) && candidate.website === target.website;
 }
 
+/**
+ * `Amount` is a TypeScript `interface` - erased at runtime, so a holder-controlled closed
+ * mandate can carry `payment_amount.amount` as any JSON value at all, not just a number. Found
+ * by review: a string, object or `NaN` amount silently produced NO violations against
+ * amount_range/budget constraints (comparisons against a non-number are `false`, and the sum in
+ * `evaluateBudget` becomes string concatenation), and a NEGATIVE amount passed whenever
+ * `amount_range` had no `min`, which then shrank `context.total_amount` on the next call,
+ * refilling a spent budget. Upstream's own `Amount` is a Pydantic model that enforces this at
+ * construction; nothing in this port did until now. MUST be checked before any arithmetic or
+ * comparison against `amount.amount`.
+ */
+function validAmount(value: unknown): value is { amount: number; currency: string } {
+	if (typeof value !== 'object' || value === null) return false;
+	const amount = (value as Record<string, unknown>)['amount'];
+	const currency = (value as Record<string, unknown>)['currency'];
+	return typeof amount === 'number' && Number.isFinite(amount) && amount >= 0 && Number.isInteger(amount) && typeof currency === 'string' && currency.length > 0;
+}
+
 function evaluateAmountRange(constraint: AmountRange, closed: PaymentMandate): string[] {
+	const amount: unknown = closed.payment_amount;
+	if (!validAmount(amount)) return [`Malformed payment_amount: expected a non-negative integer amount and a currency string, got ${JSON.stringify(amount)}`];
 	const violations: string[] = [];
-	const amount = closed.payment_amount;
 	if (constraint.currency && amount.currency !== constraint.currency) {
 		violations.push(`Currency mismatch: expected ${constraint.currency}, got ${amount.currency}`);
 	}
@@ -97,12 +116,14 @@ function evaluateAllowedPisps(constraint: AllowedPisps, closed: PaymentMandate):
  * a 2-decimal currency (matching upstream's own hardcoded assumption) - not correct for
  * zero-decimal currencies (e.g. JPY), but that is upstream's bug to fix, not ours to paper over. */
 function evaluateBudget(constraint: Budget, closed: PaymentMandate, context: MandateContext | undefined): string[] {
-	if (closed.payment_amount.currency !== constraint.currency) {
-		return [`Budget currency mismatch: expected ${constraint.currency}, got ${closed.payment_amount.currency}`];
+	const amount: unknown = closed.payment_amount;
+	if (!validAmount(amount)) return [`Malformed payment_amount: expected a non-negative integer amount and a currency string, got ${JSON.stringify(amount)}`];
+	if (amount.currency !== constraint.currency) {
+		return [`Budget currency mismatch: expected ${constraint.currency}, got ${amount.currency}`];
 	}
 	if (!context) return ['Missing mandate context required to evaluate budget'];
 	const pastSpend = context.total_amount;
-	const totalSpend = pastSpend + closed.payment_amount.amount;
+	const totalSpend = pastSpend + amount.amount;
 	const budgetMaxCents = Math.trunc(constraint.max * 100);
 	if (totalSpend > budgetMaxCents) {
 		return [`Cumulative spend ${totalSpend} exceeds budget limit ${budgetMaxCents} (past spend: ${pastSpend})`];
@@ -142,6 +163,13 @@ function evaluatePaymentConstraint(constraint: PaymentConstraint, closed: Paymen
 		case 'payment.execution_date':
 			return evaluateExecutionDate(constraint, closed);
 	}
+	// Upstream's own create_payment_evaluator raises ValueError for an unmatched type - fails
+	// closed, deliberately. This switch previously had no default: an unmatched type (runtime
+	// data, not actually constrained by the TS union) fell through, returned undefined, and
+	// `violations.push(...undefined)` at the call site threw "undefined is not iterable" - an
+	// accidental crash that happened to fail closed, not a deliberate one. Throwing explicitly
+	// here makes the behaviour intentional and gives callers a reason to catch.
+	throw new Error(`unknown_payment_constraint_type: ${(constraint as { type: string }).type}`);
 }
 
 /** Pre-set claims the open mandate fixed at issuance must appear unchanged in the closed mandate. */
@@ -217,6 +245,8 @@ function evaluateCheckoutConstraint(constraint: CheckoutConstraint, checkout: Ch
 		case 'checkout.line_items':
 			return evaluateLineItems(constraint, checkout);
 	}
+	// Same reasoning as evaluatePaymentConstraint: deliberate, not an accidental undefined-spread crash.
+	throw new Error(`unknown_checkout_constraint_type: ${(constraint as { type: string }).type}`);
 }
 
 /** Verify a decoded Checkout satisfies the open checkout mandate's constraints. */

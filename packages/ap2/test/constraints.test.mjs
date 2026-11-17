@@ -158,3 +158,34 @@ test('checkout line_items: unsatisfiable requirement fails', () => {
 	const violations = checkCheckoutConstraints(open, checkout);
 	assert.ok(violations.length > 0);
 });
+
+// Regression: a holder-controlled closed mandate's payment_amount.amount used to need no
+// particular type at runtime (Amount is a TS interface, erased at runtime), so a string, object
+// or NaN sailed through amount_range/budget checks with no violations, and a negative amount
+// could refill a spent budget.
+test('amount_range: a non-numeric amount is a violation, not silently accepted', () => {
+	const open = openMandate([{ type: 'payment.amount_range', currency: 'USD', max: 2000 }]);
+	const malformed = { ...BASE_PAYMENT, payment_amount: { amount: 'not-a-number', currency: 'USD' } };
+	const violations = checkPaymentConstraints(open, malformed);
+	assert.ok(violations.length > 0, 'a non-numeric amount must produce at least one violation');
+});
+
+test('amount_range: a NaN amount is a violation, not silently accepted', () => {
+	const open = openMandate([{ type: 'payment.amount_range', currency: 'USD', max: 2000 }]);
+	const malformed = { ...BASE_PAYMENT, payment_amount: { amount: NaN, currency: 'USD' } };
+	const violations = checkPaymentConstraints(open, malformed);
+	assert.ok(violations.length > 0, 'a NaN amount must produce at least one violation');
+});
+
+test('budget: a negative amount is a violation, never allowed to reduce cumulative spend', () => {
+	const open = openMandate([{ type: 'payment.budget', currency: 'USD', max: 50 }]);
+	const malformed = { ...BASE_PAYMENT, payment_amount: { amount: -100000, currency: 'USD' } };
+	const context = { total_amount: 4000, total_uses: 1, last_used_date: null };
+	const violations = checkPaymentConstraints(open, malformed, undefined, context);
+	assert.ok(violations.length > 0, 'a negative amount must produce at least one violation, never silently refill the budget');
+});
+
+test('an unmatched payment constraint type throws explicitly, rather than crashing on undefined-spread', () => {
+	const open = openMandate([{ type: 'payment.not_a_real_constraint' }]);
+	assert.throws(() => checkPaymentConstraints(open, BASE_PAYMENT), /unknown_payment_constraint_type/);
+});

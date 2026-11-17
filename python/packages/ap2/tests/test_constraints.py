@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Unit tests for the constraint evaluators ported from AP2's constraints.py.
+import math
+
+import pytest
+
 from cheqd_agent_identity_ap2.constraints import (
     check_checkout_constraints,
     check_payment_constraints,
@@ -191,3 +195,35 @@ def test_checkout_line_items_unsatisfiable_requirement_fails():
     }
     violations = check_checkout_constraints(open_, checkout)
     assert len(violations) > 0
+
+
+# Regression: a holder-controlled closed mandate's payment_amount["amount"] used to need no
+# particular type at runtime (TypedDict is erased at runtime), so json.loads's own NaN token
+# (accepted by default) sailed through amount_range/budget checks with no violations, and a
+# negative amount could refill a spent budget.
+def test_amount_range_a_nan_amount_is_a_violation_not_silently_accepted():
+    open_ = open_mandate([{"type": "payment.amount_range", "currency": "USD", "max": 2000}])
+    malformed = {**BASE_PAYMENT, "payment_amount": {"amount": math.nan, "currency": "USD"}}
+    violations = check_payment_constraints(open_, malformed)
+    assert len(violations) > 0, "a NaN amount must produce at least one violation"
+
+
+def test_amount_range_a_non_integer_amount_is_a_violation_not_silently_accepted():
+    open_ = open_mandate([{"type": "payment.amount_range", "currency": "USD", "max": 2000}])
+    malformed = {**BASE_PAYMENT, "payment_amount": {"amount": "not-a-number", "currency": "USD"}}
+    violations = check_payment_constraints(open_, malformed)
+    assert len(violations) > 0, "a non-integer amount must produce at least one violation"
+
+
+def test_budget_a_negative_amount_is_a_violation_never_allowed_to_reduce_cumulative_spend():
+    open_ = open_mandate([{"type": "payment.budget", "currency": "USD", "max": 50}])
+    malformed = {**BASE_PAYMENT, "payment_amount": {"amount": -100000, "currency": "USD"}}
+    context = {"total_amount": 4000, "total_uses": 1, "last_used_date": None}
+    violations = check_payment_constraints(open_, malformed, context=context)
+    assert len(violations) > 0, "a negative amount must never silently refill the budget"
+
+
+def test_an_unmatched_payment_constraint_type_raises_explicitly_rather_than_failing_open():
+    open_ = open_mandate([{"type": "payment.not_a_real_constraint"}])
+    with pytest.raises(ValueError, match="unknown_payment_constraint_type"):
+        check_payment_constraints(open_, BASE_PAYMENT)

@@ -46,9 +46,37 @@ def merchant_matches(candidate: Merchant, target: Merchant) -> bool:
     )
 
 
+def _valid_amount(value: object) -> bool:
+    """`Amount` is a `TypedDict` - erased at runtime, so a holder-controlled closed mandate can
+    carry `payment_amount["amount"]` as any JSON value at all. Found by review: `json.loads`
+    accepts the bare `NaN` token by default (same as the `sd-jwt` library's own `loads`), and a
+    `NaN` amount silently produced NO violations against amount_range/budget constraints
+    (comparisons against NaN are always `False` in Python too, not just JS), and a NEGATIVE
+    amount passed whenever `amount_range` had no `min`, which then shrank
+    `context["total_amount"]` on the next call, refilling a spent budget. Upstream's own
+    `Amount` is a Pydantic model that enforces this at construction; nothing in this port did
+    until now. MUST be checked before any arithmetic or comparison against `amount["amount"]`.
+    """
+    if not isinstance(value, dict):
+        return False
+    amount = value.get("amount")
+    currency = value.get("currency")
+    return (
+        isinstance(amount, int)
+        and not isinstance(amount, bool)
+        and amount >= 0
+        and isinstance(currency, str)
+        and len(currency) > 0
+    )
+
+
 def _evaluate_amount_range(constraint: AmountRange, closed: PaymentMandate) -> list[str]:
-    violations: list[str] = []
     amount = closed["payment_amount"]
+    if not _valid_amount(amount):
+        return [
+            f"Malformed payment_amount: expected a non-negative integer amount and currency, got {amount!r}"
+        ]
+    violations: list[str] = []
     if constraint.get("currency") and amount["currency"] != constraint["currency"]:
         violations.append(f"Currency mismatch: expected {constraint['currency']}, got {amount['currency']}")
     if constraint.get("min") is not None and amount["amount"] < constraint["min"]:
@@ -129,13 +157,17 @@ def _evaluate_budget(constraint: Budget, closed: PaymentMandate, context: Mandat
     for zero-decimal currencies (e.g. JPY), but that is upstream's bug to fix, not ours to
     paper over.
     """
-    if closed["payment_amount"]["currency"] != constraint["currency"]:
-        got = closed["payment_amount"]["currency"]
-        return [f"Budget currency mismatch: expected {constraint['currency']}, got {got}"]
+    amount = closed["payment_amount"]
+    if not _valid_amount(amount):
+        return [
+            f"Malformed payment_amount: expected a non-negative integer amount and currency, got {amount!r}"
+        ]
+    if amount["currency"] != constraint["currency"]:
+        return [f"Budget currency mismatch: expected {constraint['currency']}, got {amount['currency']}"]
     if context is None:
         return ["Missing mandate context required to evaluate budget"]
     past_spend = context["total_amount"]
-    total_spend = past_spend + closed["payment_amount"]["amount"]
+    total_spend = past_spend + amount["amount"]
     budget_max_cents = math.trunc(constraint["max"] * 100)
     if total_spend > budget_max_cents:
         return [
@@ -182,7 +214,11 @@ def _evaluate_payment_constraint(
         return _evaluate_budget(constraint, closed, context)
     if constraint_type == "payment.execution_date":
         return _evaluate_execution_date(constraint, closed)
-    return []
+    # Upstream's own create_payment_evaluator raises ValueError for an unmatched type - fails
+    # closed, deliberately (confirmed directly against upstream's source). This used to
+    # silently `return []` here instead: an open mandate constraint of an unrecognized type
+    # passed with no violation at all, for any amount, fail-OPEN rather than fail-closed.
+    raise ValueError(f"unknown_payment_constraint_type: {constraint_type!r}")
 
 
 def _amount_equals(a: dict, b: dict) -> bool:
@@ -271,7 +307,8 @@ def _evaluate_checkout_constraint(constraint: CheckoutConstraint, checkout: Chec
         return _evaluate_allowed_merchants(constraint, checkout)
     if constraint_type == "checkout.line_items":
         return _evaluate_line_items(constraint, checkout)
-    return []
+    # Same reasoning as _evaluate_payment_constraint: fail closed, deliberately.
+    raise ValueError(f"unknown_checkout_constraint_type: {constraint_type!r}")
 
 
 def check_checkout_constraints(open_mandate: OpenCheckoutMandate, checkout: Checkout) -> list[str]:
