@@ -38,13 +38,24 @@ export interface CheqdStatusCheckerOptions {
  * Build a {@link BitstringRevocationChecker} that fails closed unless the fetched status list's
  * `eddsa-jcs-2022` proof verifies against the pinned issuer's resolved `did:cheqd` key - per
  * spec §5.6 option 1, the proof-based alternative to ledger-anchoring-only trust.
+ *
+ * `@kya-os/mcp` 1.23.0+: because `verifyStatusList` is always set here, the returned checker
+ * MUST be called with a second argument naming the checked credential's issuer -
+ * `checker(entry, { credentialIssuer })` - so it can decide that issuer is the keeper of the
+ * entry's `statusListCredential` URL (the default, rule-4 case of "status lists held to their
+ * credential"). A plain JSON `entry` carries no issuer of its own; omitting the second argument
+ * fails closed with a `configuration_error` reason, not a revoked/clear verdict. See
+ * `@kya-os/mcp`'s UPGRADING.md, "Status lists held to their credential".
  */
 export function createCheqdStatusChecker(options: CheqdStatusCheckerOptions): BitstringRevocationChecker {
 	const verifyStatusList = createStatusListProofVerifier({
-		// The verifier only reads `.id` and the public-key fields off each verification method
-		// (confirmed by reading `status-list-proof.js`) - never `.type`/`.controller`, which
-		// `MinimalDidDocument` doesn't carry. The declared `DIDResolver` type wants them anyway;
-		// this cast reflects that the runtime contract is narrower than the published type.
+		// The verifier only reads `.id`, `.assertionMethod` and the public-key fields off each
+		// verification method (confirmed by reading `status-list-proof.js`) - never `.type`/
+		// `.controller`, which `MinimalDidDocument` doesn't carry. The declared `DIDResolver` type
+		// wants them anyway; this cast reflects that the runtime contract is narrower than the
+		// published type. @kya-os/mcp 1.23.0+ verifies only a key `assertionMethod` lists - a
+		// document that omits it entirely is treated as listing none, so every resolver this
+		// option is given MUST state `assertionMethod` for its signing key(s).
 		didResolver: { resolve: (did: string) => options.resolveDidCheqd(did) } as never,
 	});
 	return createRevocationChecker({
