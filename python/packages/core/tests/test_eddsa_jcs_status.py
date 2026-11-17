@@ -88,7 +88,13 @@ def _world(bits: bytes):
         if did != DID:
             return None
         return MinimalDidDocument(
-            id=DID, verification_method=(MinimalVerificationMethod(id=KID, public_key_jwk=public_key_jwk),)
+            id=DID,
+            verification_method=(
+                MinimalVerificationMethod(
+                    id=KID, type="JsonWebKey2020", controller=DID, public_key_jwk=public_key_jwk
+                ),
+            ),
+            assertion_method=(KID,),
         )
 
     async def fetch(_url):
@@ -155,7 +161,13 @@ async def test_a_list_whose_proof_was_tampered_with_fails_closed_to_revoked():
         if did != DID:
             return None
         return MinimalDidDocument(
-            id=DID, verification_method=(MinimalVerificationMethod(id=KID, public_key_jwk=public_key_jwk),)
+            id=DID,
+            verification_method=(
+                MinimalVerificationMethod(
+                    id=KID, type="JsonWebKey2020", controller=DID, public_key_jwk=public_key_jwk
+                ),
+            ),
+            assertion_method=(KID,),
         )
 
     async def fetch(_url):

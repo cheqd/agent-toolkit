@@ -30,10 +30,20 @@ export interface WireRequest {
 
 function methodAndParamsFor(req: WireRequest | null | undefined): { method?: string; params?: unknown } {
 	const body = req?.body ?? {};
-	if (body.method !== undefined) return { method: body.method, params: body.params };
-	// REST: no top-level method, so it's implied by the route (restHandler's own convention).
+	// REST route checked FIRST, and once it matches, the bare body is the covered params with no
+	// further interpretation - never body.method/body.params. A request on the message:send/
+	// message:stream route is executed by restHandler as SendMessageRequest.fromJSON(body): a
+	// body carrying its own top-level `method`/`params` fields (smuggled alongside the real
+	// top-level fields restHandler actually reads) does not change what gets executed, so it
+	// MUST NOT change what gets verified either. Checking body.method first - as this used to -
+	// let an attacker holding a valid proof for one message smuggle it under `params`, with a
+	// different message at the real top level, and have the verified proof and the executed
+	// message diverge: userBuilder verified the smuggled message, restHandler executed the real
+	// one, and the wrapper still attached a response proof over the executed result.
 	if (/message:send$/.test(req?.path ?? '')) return { method: 'SendMessage', params: body };
 	if (/message:stream$/.test(req?.path ?? '')) return { method: 'SendStreamingMessage', params: body };
+	// JSON-RPC only, now that no REST route matched.
+	if (body.method !== undefined) return { method: body.method, params: body.params };
 	return {};
 }
 

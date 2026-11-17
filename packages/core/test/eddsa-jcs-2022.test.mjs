@@ -37,7 +37,14 @@ function sign(document, verificationMethod, privateKey) {
 function world() {
 	const { publicKey, privateKey } = generateKeyPairSync('ed25519');
 	const publicKeyJwk = { kty: 'OKP', crv: 'Ed25519', x: publicKey.export({ format: 'jwk' }).x };
-	const resolveDidDocument = async (did) => (did === DID ? { id: DID, verificationMethod: [{ id: KID, publicKeyJwk }] } : null);
+	const resolveDidDocument = async (did) =>
+		did === DID
+			? {
+					id: DID,
+					verificationMethod: [{ id: KID, type: 'JsonWebKey2020', controller: DID, publicKeyJwk }],
+					assertionMethod: [KID],
+				}
+			: null;
 	return { privateKey, resolveDidDocument };
 }
 
@@ -75,5 +82,49 @@ test('signed by a key not published in the resolved DID document fails', async (
 	const { privateKey: wrongKey } = generateKeyPairSync('ed25519');
 	const { resolveDidDocument } = world();
 	const document = sign({ issuer: DID, value: 'hello' }, KID, wrongKey);
+	assert.equal(await verifyEddsaJcs2022(document, resolveDidDocument), false);
+});
+
+// Regression: this verifier used to accept any key in verificationMethod, never checking that
+// the key is actually listed under assertionMethod (W3C Controlled Identifiers v1.0 §3.3). A key
+// published only under authentication - a login/session key, not one authorized to make
+// assertions - used to verify here; it must not.
+test('a key listed only under authentication, not assertionMethod, fails even though it is a valid verificationMethod entry', async () => {
+	const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+	const publicKeyJwk = { kty: 'OKP', crv: 'Ed25519', x: publicKey.export({ format: 'jwk' }).x };
+	const resolveDidDocument = async (did) =>
+		did === DID
+			? {
+					id: DID,
+					verificationMethod: [{ id: KID, type: 'JsonWebKey2020', controller: DID, publicKeyJwk }],
+					assertionMethod: [], // explicitly NOT listed here
+					authentication: [KID],
+				}
+			: null;
+	const document = sign({ issuer: DID, value: 'hello' }, KID, privateKey);
+	assert.equal(await verifyEddsaJcs2022(document, resolveDidDocument), false);
+});
+
+test('a key whose controller is a different DID than the document fails, even if listed under assertionMethod', async () => {
+	const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+	const publicKeyJwk = { kty: 'OKP', crv: 'Ed25519', x: publicKey.export({ format: 'jwk' }).x };
+	const resolveDidDocument = async (did) =>
+		did === DID
+			? {
+					id: DID,
+					verificationMethod: [{ id: KID, type: 'JsonWebKey2020', controller: 'did:web:someone-else.example', publicKeyJwk }],
+					assertionMethod: [KID],
+				}
+			: null;
+	const document = sign({ issuer: DID, value: 'hello' }, KID, privateKey);
+	assert.equal(await verifyEddsaJcs2022(document, resolveDidDocument), false);
+});
+
+test('a document with no assertionMethod relationship at all fails, even with a matching verificationMethod', async () => {
+	const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+	const publicKeyJwk = { kty: 'OKP', crv: 'Ed25519', x: publicKey.export({ format: 'jwk' }).x };
+	const resolveDidDocument = async (did) =>
+		did === DID ? { id: DID, verificationMethod: [{ id: KID, type: 'JsonWebKey2020', controller: DID, publicKeyJwk }] } : null;
+	const document = sign({ issuer: DID, value: 'hello' }, KID, privateKey);
 	assert.equal(await verifyEddsaJcs2022(document, resolveDidDocument), false);
 });

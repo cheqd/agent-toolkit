@@ -53,7 +53,14 @@ async function signedCredential({ primaryPublicKeyJwk, privateKey, paymentKeyJwk
 
 function depsFor(primaryPublicKeyJwk, { revoked = false, fresh = true } = {}) {
 	return {
-		resolveDidDocument: async (did) => (did === PRIMARY_DID ? { id: PRIMARY_DID, verificationMethod: [{ id: PRIMARY_KID, publicKeyJwk: primaryPublicKeyJwk }] } : null),
+		resolveDidDocument: async (did) =>
+			did === PRIMARY_DID
+				? {
+						id: PRIMARY_DID,
+						verificationMethod: [{ id: PRIMARY_KID, type: 'JsonWebKey2020', controller: PRIMARY_DID, publicKeyJwk: primaryPublicKeyJwk }],
+						assertionMethod: [PRIMARY_KID],
+					}
+				: null,
 		checkRevoked: async () => ({ revoked, fresh }),
 	};
 }
