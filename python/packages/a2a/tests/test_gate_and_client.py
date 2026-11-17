@@ -258,15 +258,15 @@ async def test_a_message_result_also_gets_a_response_proof_closing_the_non_task_
     world = World()
     gate = world.gate()
     interceptor = world.interceptor()
-    params, _ = await interceptor.before("SendMessage", {"message": {"content": "hello"}})
+    call = await interceptor.before("SendMessage", {"message": {"content": "hello"}})
 
     async def message_handler():
         return {"role": "agent", "content": "just a message, not a task"}
 
-    result = await gate.handle_send_message("SendMessage", params, message_handler)
+    result = await gate.handle_send_message("SendMessage", call.params, message_handler)
     assert "org.kya-os/response-proof" in result["metadata"]
 
-    await interceptor.after("SendMessage", result)
+    await interceptor.after("SendMessage", result, call)
     assert interceptor.state.last_response_check.valid is True
 
 
@@ -281,14 +281,16 @@ async def test_a_substituted_unproven_message_result_is_flagged_invalid_not_sile
     world = World()
     gate = world.gate()
     interceptor = world.interceptor()
-    params, _ = await interceptor.before("SendMessage", {"message": {"content": "hello"}})
+    call = await interceptor.before("SendMessage", {"message": {"content": "hello"}})
 
     # The real handler would have returned a genuine, proven Task via `gate.handle_send_message`.
     # Simulate a man-in-the-middle substituting an unproven Message instead - no "status" key,
     # no response-proof metadata at all.
     substituted = {"role": "agent", "content": "ATTACKER SUBSTITUTED MESSAGE, NEVER PROVEN"}
 
-    await interceptor.after("SendMessage", substituted)
+    with pytest.raises(ResponseProofVerificationError) as exc_info:
+        await interceptor.after("SendMessage", substituted, call)
+    assert exc_info.value.code == "no_response_proof"
     assert interceptor.state.last_response_check is not None
     assert interceptor.state.last_response_check.valid is False
     assert interceptor.state.last_response_check.reason == "no response proof"
