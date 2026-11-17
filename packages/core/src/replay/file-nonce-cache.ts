@@ -40,8 +40,27 @@
  * to any other caller entirely, rather than trying to make each individual filesystem call atomic
  * against every other individual call. The `rename()`-based reclaim is kept as defense in depth
  * for genuinely separate OS processes sharing this directory, which the in-process queue cannot
- * help: `rename()` on the same source path is still atomic across processes, so at most one
- * process's reclaim of a given expired file can win even without the queue.
+ * help, but it is NOT a complete fix for that case: each individual `rename()` call is atomic (so
+ * two processes can't both rename away the SAME still-stale file), but that is weaker than full
+ * safety - the exact "caller D" scenario above (read "expired", then rename AFTER a fresh record
+ * has already been written at that path) can still happen across processes, because `rename()`
+ * only checks that its source path exists, not that it is still the stale snapshot that process
+ * examined. Cross-process reclaim is therefore still racy in principle; the queue below only
+ * makes it race-free for callers sharing this one process (which, per the paragraph above, is the
+ * scenario this module is actually meant to cover).
+ *
+ * `cleanup()` goes through the same per-key queue as `consume()`, for the same reason: without
+ * it, `cleanup()` could read a record, see it as expired, and then `rm()` it AFTER a concurrent
+ * `consume()` had already reclaimed that same slot and written a fresh, live record there -
+ * deleting the fresh record and making the nonce look unconsumed again, well within its new TTL.
+ * Serializing each file's cleanup check-and-delete through the same queue entry a reclaim of that
+ * file would use closes this the same way: by removing the "then-act" step's exposure, not by
+ * trying to make the individual read and the individual `rm()` atomic as a pair.
+ *
+ * The `queues` map itself is pruned as each key's chain settles (see `enqueue()`): nonces are
+ * unique by construction, so every distinct `(agentDid, nonce)` that has ever been consumed would
+ * otherwise add an entry that is never removed - a caller submitting enough distinct nonces could
+ * grow this process-lifetime map without bound.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -66,8 +85,9 @@ export class FileNonceCacheProvider extends NonceCacheProvider {
 	private readonly now: () => number;
 	private ready: Promise<void> | undefined;
 	// Per-(agentDid, nonce) in-process serialization for consume()'s read-reclaim-create sequence
-	// - see the class doc comment for why the whole body, not just the filesystem calls, must be
-	// serialized.
+	// and for cleanup()'s per-record check-and-delete - see the class doc comment for why the
+	// whole body, not just the filesystem calls, must be serialized. Pruned as each key's chain
+	// settles (see enqueue()) so this does not grow without bound.
 	private readonly queues = new Map<string, Promise<unknown>>();
 
 	constructor(options: FileNonceCacheOptions) {
@@ -79,10 +99,21 @@ export class FileNonceCacheProvider extends NonceCacheProvider {
 	private enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
 		const prior = this.queues.get(key) ?? Promise.resolve();
 		const next = prior.then(task, task);
-		this.queues.set(
-			key,
-			next.catch(() => undefined),
-		);
+		const settled = next.catch(() => undefined);
+		this.queues.set(key, settled);
+		// Prune the entry once our tail settles - but only if nobody chained a further task onto
+		// this key in the meantime, i.e. the map still points at exactly OUR tail promise. If
+		// another enqueue() call for this key came in while we were running, it already replaced
+		// this entry with its own tail (read via this.queues.get(key) at ITS call time, before
+		// this callback can run - queues.set() and queues.get() are both synchronous, so there is
+		// no interleaving within a single call), and that other caller's chain is a closure over
+		// `settled` directly, not a re-fetch from the map - so correctness of ordering never
+		// depends on the map. This only prevents the map from growing without bound.
+		settled.then(() => {
+			if (this.queues.get(key) === settled) {
+				this.queues.delete(key);
+			}
+		});
 		return next;
 	}
 
@@ -94,7 +125,9 @@ export class FileNonceCacheProvider extends NonceCacheProvider {
 	private pathFor(nonce: string, agentDid?: string): string {
 		// Hash rather than use the nonce/DID directly as a filename: both are attacker-influenced
 		// (a proof's own nonce, and the DID it claims), and neither is safe as a raw path segment.
-		const key = createHash('sha256').update(`${agentDid ?? ''}\u0000${nonce}`).digest('hex');
+		const key = createHash('sha256')
+			.update(`${agentDid ?? ''}\u0000${nonce}`)
+			.digest('hex');
 		return join(this.directory, `${key}.json`);
 	}
 
@@ -174,6 +207,10 @@ export class FileNonceCacheProvider extends NonceCacheProvider {
 	 * window to save a few bytes of disk - the wrong trade. It becomes permanent, harmless
 	 * clutter instead; that failure mode was never meant to be reachable (every write is this
 	 * module's own well-formed JSON), so it is not optimised for.
+	 *
+	 * Each file's check-and-delete is routed through the same per-path queue `consume()` uses -
+	 * see the class doc comment - so a concurrent reclaim of that exact file can never land
+	 * between this method reading the (expired) record and deleting it.
 	 */
 	async cleanup(): Promise<void> {
 		await this.ensureDirectory();
@@ -181,12 +218,16 @@ export class FileNonceCacheProvider extends NonceCacheProvider {
 		await Promise.all(
 			entries
 				.filter((name) => name.endsWith('.json'))
-				.map(async (name) => {
+				.map((name) => {
 					const path = join(this.directory, name);
-					const record = await this.readRecord(path);
-					if (record !== undefined && record.expiresAt <= this.now()) await rm(path, { force: true });
+					return this.enqueue(path, () => this.cleanupOne(path));
 				}),
 		);
+	}
+
+	private async cleanupOne(path: string): Promise<void> {
+		const record = await this.readRecord(path);
+		if (record !== undefined && record.expiresAt <= this.now()) await rm(path, { force: true });
 	}
 
 	/** No open handles are kept between calls, so there is nothing to release; provided to
