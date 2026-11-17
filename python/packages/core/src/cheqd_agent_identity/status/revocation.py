@@ -9,9 +9,30 @@ given, inflates the multibase/GZIP `encodedList` bitstring, and reads the bit at
 `status_list_index`.
 
 FAIL-CLOSED is the invariant: an unreachable status list, a malformed credential, a list
-whose proof is rejected, a mismatched `statusPurpose`, or an out-of-range index all resolve
-to `revoked=True, fresh=False` - the absence of proof-of-liveness is treated as revoked,
-never as "probably fine".
+whose proof is rejected, a status list that does not come from the entry's bound issuer, an
+entry whose `statusSize` is not 1, a mismatched `statusPurpose`, or an out-of-range index all
+resolve to `revoked=True, fresh=False` - the absence of proof-of-liveness is treated as
+revoked, never as "probably fine".
+
+ISSUER BINDING: a status list's proof shows only who SIGNED it, not that it is the list bound
+to the entry being checked (W3C Bitstring Status List v1.0 §2.2/§3.2 explicitly allow the
+signer to differ from the credential's own issuer). Without a check tying the fetched list to
+the entry, whoever controls what `entry.status_list_credential`'s URL returns can serve their
+OWN validly self-signed list with the bit cleared, and its proof verifies - the proof alone
+never meant "this is the correct list". When `verify_status_list` is given, `check()` therefore
+REQUIRES its caller to also name `credential_issuer` (the DID of the credential whose status is
+being asked about) and only accepts a fetched list whose own `issuer` equals it; a call that
+omits `credential_issuer` fails closed rather than silently skipping the binding. Ported from
+(a scoped-down subset of) `@kya-os/mcp`'s 1.23.0+ `statusListIssuers`/`acceptStatusList`
+machinery - this module implements only the single, default "list held to the credential's own
+issuer" case that is actually used anywhere in this repository today, not the full configurable
+multi-root/configured-URL keeper DSL `@kya-os/mcp` also offers.
+
+`statusSize`: an entry whose `statusSize` is present and not `1` keeps its status at a
+different bit position than the one this module reads (W3C Bitstring Status List v1.0 §3.2
+step 10: the bit read is at `statusListIndex * statusSize`, not merely `statusListIndex`).
+Rather than compute that multi-bit offset, every reader in `@kya-os/mcp` 1.23.0+ refuses such
+an entry before any fetch (`acceptEntrySize`) - ported here as `_accept_entry_size`.
 
 SPDX-License-Identifier: Apache-2.0
 """
@@ -59,11 +80,34 @@ class RevocationVerdict:
     `valid_until`) or not-yet-valid list still yields a readable bit but `fresh=False`."""
 
 
-RevocationChecker = Callable[[StatusEntry], Awaitable[RevocationVerdict]]
+RevocationChecker = Callable[[StatusEntry, Optional[str]], Awaitable[RevocationVerdict]]
 
 
 def _now_ms() -> float:
     return time.time() * 1000
+
+
+def _accept_entry_size(status_size: Optional[int]) -> Optional[str]:
+    """`None` when `status_size` may be read as one bit (absent or `1`); otherwise the
+    fail-closed reason. Mirrors `@kya-os/mcp`'s `acceptEntrySize`: W3C Bitstring Status List
+    v1.0 SS2.1 requires an integer greater than zero when present; SS3.2 step 10 reads the bit at
+    `statusListIndex * statusSize`, which this module does not compute, so any value other than
+    1 is refused rather than misread.
+    """
+    if status_size is None or status_size == 1:
+        return None
+    if isinstance(status_size, int) and not isinstance(status_size, bool) and status_size > 0:
+        return f"the entry's statusSize is {status_size}, and only an entry of one bit is read"
+    return f"the entry's statusSize ({status_size!r}) is not an integer greater than zero"
+
+
+def _issuer_of(credential: dict[str, Any]) -> Optional[str]:
+    issuer = credential.get("issuer")
+    if isinstance(issuer, str):
+        return issuer
+    if isinstance(issuer, dict) and isinstance(issuer.get("id"), str):
+        return issuer["id"]
+    return None
 
 
 def create_revocation_checker(
@@ -75,15 +119,35 @@ def create_revocation_checker(
     decompress: Optional[Decompress] = None,
 ) -> RevocationChecker:
     """Build the default `RevocationChecker` over W3C Bitstring Status List v1.0. Any
-    failure on the path (unreachable, non-2xx, malformed, wrong purpose, out-of-range index)
-    resolves fail-closed (`revoked=True, fresh=False`).
+    failure on the path (unreachable, non-2xx, malformed, wrong purpose, wrong `statusSize`,
+    out-of-range index) resolves fail-closed (`revoked=True, fresh=False`).
+
+    When `verify_status_list` is given, every call MUST also pass `credential_issuer` - the DID
+    of the credential whose status is being asked about - so the fetched list can be held to
+    it; see the module doc comment. A call that omits it fails closed, it does not silently skip
+    the binding.
     """
 
-    async def check(entry: StatusEntry) -> RevocationVerdict:
+    async def check(entry: StatusEntry, credential_issuer: Optional[str] = None) -> RevocationVerdict:
         try:
+            size_rejection = _accept_entry_size(entry.status_size)
+            if size_rejection is not None:
+                raise ValueError(f"revocation: {size_rejection}")
             credential = await _fetch_status_list(entry.status_list_credential, fetch)
-            if verify_status_list is not None and (await verify_status_list(credential)) is not True:
-                raise ValueError("revocation: status-list proof rejected")
+            if verify_status_list is not None:
+                if credential_issuer is None:
+                    raise ValueError(
+                        "revocation: no credential issuer named to hold the status list to - a "
+                        "resolver or checker that wraps this one must pass credential_issuer on"
+                    )
+                list_issuer = _issuer_of(credential)
+                if list_issuer != credential_issuer:
+                    raise ValueError(
+                        f"revocation: status list issuer {list_issuer!r} does not keep this "
+                        f"entry's URL: expected the credential's issuer {credential_issuer!r}"
+                    )
+                if (await verify_status_list(credential)) is not True:
+                    raise ValueError("revocation: status-list proof rejected")
             subject = _status_list_subject(credential)
             assert_status_purpose(subject.get("statusPurpose"), status_purpose)
             bits = _decode_status_list(credential, decompress)
@@ -102,7 +166,23 @@ class ChainResult:
     reasons: Sequence[str]
 
 
-async def evaluate_revocation_chain(entries: Sequence[StatusEntry], check: RevocationChecker) -> ChainResult:
+@dataclass(frozen=True)
+class RevocationChainEntry:
+    """One hop of a chain passed to `evaluate_revocation_chain`, paired with the DID that
+    issued the credential this hop's status entry belongs to - so the checker can hold the
+    hop's status list to THAT issuer, not the leaf's or some other hop's. A bare `StatusEntry`
+    (no `RevocationChainEntry` wrapper) is checked with no bound issuer, which a checker given
+    `verify_status_list` fails closed on.
+    """
+
+    entry: StatusEntry
+    credential_issuer: Optional[str] = None
+    position: Optional[int] = None
+
+
+async def evaluate_revocation_chain(
+    entries: Sequence[Union[StatusEntry, RevocationChainEntry]], check: RevocationChecker
+) -> ChainResult:
     """Walk a delegation/capability chain root->leaf and fail-close on the first revoked or
     unresolvable hop (cascading - a revoked ancestor invalidates the subtree, so the walk
     short-circuits). `fresh` is the AND of every checked hop's liveness.
@@ -112,8 +192,16 @@ async def evaluate_revocation_chain(entries: Sequence[StatusEntry], check: Revoc
     obtained no live signal.
     """
     fresh = len(entries) > 0
-    for hop, entry in enumerate(entries):
-        status = await check(entry)
+    for index, item in enumerate(entries):
+        if isinstance(item, RevocationChainEntry):
+            entry = item.entry
+            credential_issuer = item.credential_issuer
+            hop = item.position if item.position is not None else index
+        else:
+            entry = item
+            credential_issuer = None
+            hop = index
+        status = await check(entry, credential_issuer)
         fresh = fresh and status.fresh
         if status.revoked:
             return ChainResult(

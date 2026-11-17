@@ -105,7 +105,7 @@ async def test_a_revoked_bit_in_a_genuinely_signed_list_reads_as_revoked():
     entry = StatusEntry(
         status_list_credential="https://example/list", status_list_index="0", status_purpose="revocation"
     )
-    verdict = await checker(entry)
+    verdict = await checker(entry, DID)
     assert verdict.revoked is True
 
 
@@ -114,8 +114,71 @@ async def test_a_clear_bit_in_a_genuinely_signed_list_reads_as_not_revoked():
     entry = StatusEntry(
         status_list_credential="https://example/list", status_list_index="0", status_purpose="revocation"
     )
-    verdict = await checker(entry)
+    verdict = await checker(entry, DID)
     assert verdict.revoked is False
+
+
+async def test_omitting_the_credential_issuer_fails_closed_even_with_a_genuine_list():
+    checker = _world(bytes([0b00000000]))
+    entry = StatusEntry(
+        status_list_credential="https://example/list", status_list_index="0", status_purpose="revocation"
+    )
+    verdict = await checker(entry)
+    assert verdict.revoked is True
+
+
+async def test_a_validly_self_signed_list_from_an_attacker_controlled_issuer_fails_closed():
+    """The end-to-end issuer-binding regression: an attacker who controls their own
+    did:cheqd and the statusListCredential URL can mint a perfectly valid eddsa-jcs-2022
+    proof over their OWN clear bitstring. That proof verifies - it says nothing about
+    whether this is the list the checked credential is actually bound to. The checker must
+    still fail closed unless the list's issuer is the credential_issuer it was asked about.
+    """
+    attacker_did = "did:cheqd:testnet:attacker"
+    attacker_kid = f"{attacker_did}#key-1"
+    attacker_key = Ed25519PrivateKey.generate()
+    attacker_public_key_jwk = {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": base64.urlsafe_b64encode(attacker_key.public_key().public_bytes_raw())
+        .rstrip(b"=")
+        .decode("ascii"),
+    }
+    attacker_list = _sign(
+        {
+            "issuer": attacker_did,
+            "credentialSubject": {
+                "statusPurpose": "revocation",
+                "encodedList": _encode_list(bytes([0b00000000])),
+            },
+        },
+        attacker_kid,
+        attacker_key,
+    )
+
+    async def resolve_did_cheqd(did):
+        if did != attacker_did:
+            return None
+        return MinimalDidDocument(
+            id=attacker_did,
+            verification_method=(
+                MinimalVerificationMethod(id=attacker_kid, public_key_jwk=attacker_public_key_jwk),
+            ),
+        )
+
+    async def fetch(_url):
+        return _Response(attacker_list)
+
+    checker = create_cheqd_status_checker(
+        CheqdStatusCheckerOptions(resolve_did_cheqd=resolve_did_cheqd, fetch=fetch)
+    )
+    entry = StatusEntry(
+        status_list_credential="https://example/list", status_list_index="0", status_purpose="revocation"
+    )
+    # The credential actually being checked is issued by DID ("did:cheqd:testnet:issuer"), not
+    # the attacker - the attacker's own validly-signed list must still be refused.
+    verdict = await checker(entry, DID)
+    assert verdict.revoked is True
 
 
 async def test_a_list_whose_proof_was_tampered_with_fails_closed_to_revoked():
@@ -167,5 +230,5 @@ async def test_a_list_whose_proof_was_tampered_with_fails_closed_to_revoked():
     entry = StatusEntry(
         status_list_credential="https://example/list", status_list_index="0", status_purpose="revocation"
     )
-    verdict = await checker(entry)
+    verdict = await checker(entry, DID)
     assert verdict.revoked is True
