@@ -76,7 +76,7 @@ def test_checkout_mandate_chain_verify_decodes_the_checkout_jwt_and_checks_const
     assert chain.verify(checkout_jwt, expected_checkout_hash=checkout_hash) == []
 
 
-def test_checkout_mandate_chain_verify_fails_on_a_checkout_hash_mismatch():
+def test_checkout_mandate_chain_verify_fails_when_checkout_hash_does_not_bind_to_checkout_jwt():
     checkout_payload = {
         "id": "c1",
         "merchant": MERCHANT,
@@ -91,13 +91,46 @@ def test_checkout_mandate_chain_verify_fails_on_a_checkout_hash_mismatch():
     closed = {"vct": "mandate.checkout.1", "checkout_jwt": checkout_jwt, "checkout_hash": "wrong-hash"}
     chain = CheckoutMandateChain.parse((open_, closed))
 
-    violations = chain.verify(checkout_jwt, expected_checkout_hash="wrong-hash")
     # The closed mandate's own checkout_hash ("wrong-hash") does equal the expectation here, so
     # this asserts the chain actually recomputes from checkout_jwt rather than trusting the field.
     assert sha256_base64url(checkout_jwt) != "wrong-hash"
-    assert (
-        violations == []
-    )  # expected_checkout_hash only checks against closed_mandate.checkout_hash, not a recompute
+    violations = chain.verify(checkout_jwt, expected_checkout_hash="wrong-hash")
+    # verify() must always recompute and bind the hash itself, regardless of expected_checkout_hash.
+    assert any("checkout_hash binding failed" in v for v in violations)
+
+
+def test_checkout_mandate_chain_verify_rejects_a_substituted_checkout_jwt_without_expected_hash():
+    committed_payload = {
+        "id": "c1",
+        "merchant": MERCHANT,
+        "line_items": [],
+        "status": "incomplete",
+        "currency": "USD",
+        "totals": [],
+    }
+    committed_jwt = fake_jwt(committed_payload)
+    committed_hash = sha256_base64url(committed_jwt)
+
+    # An attacker-supplied checkout_jwt, different from the one the closed mandate committed to,
+    # but still well-formed enough to decode and pass constraint checks on its own.
+    substituted_payload = {
+        "id": "c2",
+        "merchant": MERCHANT,
+        "line_items": [],
+        "status": "incomplete",
+        "currency": "USD",
+        "totals": [],
+    }
+    substituted_jwt = fake_jwt(substituted_payload)
+
+    open_ = {"vct": "mandate.checkout.open.1", "constraints": [], "cnf": {"jwk": {}}}
+    closed = {"vct": "mandate.checkout.1", "checkout_jwt": committed_jwt, "checkout_hash": committed_hash}
+    chain = CheckoutMandateChain.parse((open_, closed))
+
+    # No expected_checkout_hash supplied at all - verify() must still catch the substitution unconditionally.
+    violations = chain.verify(substituted_jwt)
+    assert any("checkout_hash binding failed" in v for v in violations)
+    assert any("checkout_jwt mismatch" in v for v in violations)
 
 
 def test_checkout_mandate_chain_verify_rejects_a_malformed_checkout_jwt():
