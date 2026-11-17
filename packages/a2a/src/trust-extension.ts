@@ -18,7 +18,27 @@ import {
 	type ManifestKind,
 } from '@cheqd/agent-identity';
 
-/** The trust extension's activation params, per spec §5.1. */
+/**
+ * The trust extension's activation params, per spec §5.1.
+ *
+ * ⚠️ Design note (per-deployment vs. per-caller): in this codebase, a single `activation` value
+ * is constructed once per deployment and shared across every caller - see `TrustExtensionGate`
+ * in wrapper.ts, whose `enforce()` always calls `cache.get(user.verified.did, trustExtension.activation)`
+ * with the SAME `activation` object regardless of which caller is being checked. `anchoredDid`'s
+ * own doc comment below calls it "the caller's claimed anchored DID", which reads as per-caller,
+ * but nothing here actually varies `activation` by caller: every caller passing through one gate
+ * is checked against the exact same `anchoredDid` and `trustConfigRef`. That's fine for a
+ * deployment fronting a single agent identity, but it is a latent mismatch between what the
+ * field is documented to mean and how it is actually wired. If an integrator "fixes" the
+ * apparent per-caller framing by building a fresh `TrustExtensionActivation` per request from
+ * caller-supplied data (e.g. a request header naming the caller's own anchored DID), the
+ * resolved-document-id binding and trustConfigRef-to-anchoredDid binding enforced below become
+ * the ONLY thing stopping a caller from pointing this module at an arbitrary anchored DID and
+ * trust-config manifest of their own choosing - do not build a per-request `activation` from
+ * caller-supplied fields; derive `anchoredDid` only from something already cryptographically
+ * bound to the caller (e.g. `user.verified.did`'s own linked documents), never from a
+ * client-asserted value.
+ */
 export interface TrustExtensionActivation {
 	/** The caller's claimed anchored `did:cheqd`, if any. Reciprocal linkage is required when present. */
 	readonly anchoredDid?: string;
@@ -35,14 +55,17 @@ export interface TrustExtensionDeps {
 	checkStatus?: (canonicalDid: string) => Promise<{ revoked: boolean; fresh: boolean }>;
 }
 
-export type TrustExtensionResult = { readonly ok: true } | { readonly ok: false; readonly reasons: readonly string[] };
+export type TrustExtensionResult =
+	{ readonly ok: true } | { readonly ok: false; readonly reasons: readonly string[] };
 
 /**
  * Parse a DID-Linked Resource reference (`did:cheqd:...?resourceName=X&resourceType=Y`) into its
  * parts. Returns `undefined` on anything malformed - callers fail closed on that, same as every
  * other reason.
  */
-function parseResourceRef(ref: string): { did: string; kind: ManifestKind; resourceName: string } | undefined {
+function parseResourceRef(
+	ref: string,
+): { did: string; kind: ManifestKind; resourceName: string } | undefined {
 	const match = /^(did:cheqd:(?:mainnet|testnet):[A-Za-z0-9_-]{16,64})\?(.+)$/.exec(ref);
 	if (!match) return undefined;
 	const [, did, query] = match;
@@ -50,7 +73,11 @@ function parseResourceRef(ref: string): { did: string; kind: ManifestKind; resou
 	const resourceName = params.get('resourceName');
 	const resourceType = params.get('resourceType');
 	if (!did || !resourceName || !resourceType) return undefined;
-	if (resourceType !== 'TrustConfigManifest' && resourceType !== 'CapabilityManifest' && resourceType !== 'ConformanceManifest') {
+	if (
+		resourceType !== 'TrustConfigManifest' &&
+		resourceType !== 'CapabilityManifest' &&
+		resourceType !== 'ConformanceManifest'
+	) {
 		return undefined;
 	}
 	return { did, kind: resourceType, resourceName };
@@ -75,6 +102,14 @@ export async function verifyTrustExtension(
 		]);
 		if (!canonicalDoc || !anchoredDoc) {
 			reasons.push('linkage_resolution_failed');
+		} else if (canonicalDoc.id !== canonicalDid || anchoredDoc.id !== activation.anchoredDid) {
+			// Bind every resolved document to the DID we actually asked for, immediately after
+			// resolving it - `resolveDidDocument` is an injected seam with no id-binding contract
+			// enforced by this module itself. Without this, a lax/generic resolver (e.g. over
+			// did:web) could return a document whose own `id` names the OTHER party's DID, and
+			// `verifyReciprocalLinkage` - which only compares the two documents against each
+			// other, never against what was actually requested - would be none the wiser.
+			reasons.push('linkage_resolved_doc_id_mismatch');
 		} else {
 			const linkage = verifyReciprocalLinkage(canonicalDoc, anchoredDoc);
 			if (!linkage.ok) reasons.push(...linkage.reasons.map((r) => `linkage_${r}`));
@@ -85,6 +120,14 @@ export async function verifyTrustExtension(
 		const parsed = parseResourceRef(activation.trustConfigRef);
 		if (!parsed) {
 			reasons.push('malformed_trust_config_ref');
+		} else if (parsed.did !== (activation.anchoredDid ?? canonicalDid)) {
+			// The manifest must belong to the DID this check is actually being run for - the
+			// caller's claimed anchored DID when declared, else the canonical DID itself.
+			// Without this, a valid, correctly-checksummed manifest belonging to ANY did:cheqd
+			// (not necessarily the caller's) would be accepted merely because it resolves and
+			// its checksum matches - `resolveManifest`'s own collection-id binding only proves
+			// the manifest belongs to `parsed.did`, never that `parsed.did` is the right DID.
+			reasons.push('manifest_did_mismatch');
 		} else {
 			const manifest = await deps.manifestCache.get(parsed.did, parsed.kind, parsed.resourceName);
 			if (!manifest.ok) reasons.push(...manifest.reasons.map((r) => `manifest_${r}`));
@@ -96,7 +139,8 @@ export async function verifyTrustExtension(
 			reasons.push('status_check_unavailable');
 		} else {
 			const status = await deps.checkStatus(canonicalDid);
-			if (status.revoked || !status.fresh) reasons.push(status.revoked ? 'status_revoked' : 'status_not_fresh');
+			if (status.revoked || !status.fresh)
+				reasons.push(status.revoked ? 'status_revoked' : 'status_not_fresh');
 		}
 	}
 
@@ -139,7 +183,10 @@ const DEFAULT_MAX_ENTRIES = 10_000;
  * since the TTL alone does not stop the entry count itself from growing without bound between
  * expirations.
  */
-export function createTrustExtensionCache(deps: TrustExtensionDeps, options: TrustExtensionCacheOptions = {}): TrustExtensionCache {
+export function createTrustExtensionCache(
+	deps: TrustExtensionDeps,
+	options: TrustExtensionCacheOptions = {},
+): TrustExtensionCache {
 	const now = options.now ?? Date.now;
 	const ttl = options.ttlMs ?? DEFAULT_TTL_MS;
 	const maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
