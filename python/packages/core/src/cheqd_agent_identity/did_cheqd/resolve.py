@@ -13,6 +13,7 @@ SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
+import re
 from typing import Any, Awaitable, Callable, Optional, Protocol
 
 import httpx
@@ -23,6 +24,8 @@ from cheqd_agent_identity.agent_card.retrieve_public_key import (
 )
 
 __all__ = ["MinimalDidDocument", "create_did_cheqd_resolver"]
+
+_DID_CHEQD_RE = re.compile(r"^did:cheqd:(?:mainnet|testnet):[A-Za-z0-9_-]{16,64}$")
 
 
 class DidCheqdResolverResponse(Protocol):
@@ -52,7 +55,11 @@ def create_did_cheqd_resolver(
     base = resolver_url.rstrip("/")
 
     async def resolve_did_cheqd(did: str) -> Optional[MinimalDidDocument]:
-        if not did.startswith("did:cheqd:"):
+        # Strict canonical-form check, not just a prefix match: a DID like
+        # `did:cheqd:testnet:VICTIM.../../did:cheqd:testnet:ATTACKER.../resources/<uuid>` starts
+        # with `did:cheqd:` but normalises (against a real resolver endpoint) to a completely
+        # different, attacker-controlled resource. Reject before constructing any URL/fetch.
+        if _DID_CHEQD_RE.match(did) is None:
             return None
         try:
             response = await do_fetch(f"{base}/{did}")

@@ -37,7 +37,11 @@ export function createDidCheqdResolver(options: DidCheqdResolverOptions): (did: 
 	const doFetch = options.fetch ?? ((url: string) => fetch(url));
 	const base = options.resolverUrl.replace(/\/+$/, '');
 	return async function resolveDidCheqd(did: string): Promise<MinimalDidDocument | null> {
-		if (!did.startsWith('did:cheqd:')) return null;
+		// Strict canonical-form check, not just a prefix match: a DID like
+		// `did:cheqd:testnet:VICTIM.../../did:cheqd:testnet:ATTACKER.../resources/<uuid>` starts
+		// with `did:cheqd:` but normalises (against a real resolver endpoint) to a completely
+		// different, attacker-controlled resource. Reject before constructing any URL/fetch.
+		if (!/^did:cheqd:(?:mainnet|testnet):[A-Za-z0-9_-]{16,64}$/.test(did)) return null;
 		let response: DidCheqdResolverResponse;
 		try {
 			response = await doFetch(`${base}/${did}`);
