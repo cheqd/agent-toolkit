@@ -14,6 +14,7 @@ from cheqd_agent_identity.dlr.resolve_manifest import (
 
 NOW = datetime(2026, 11, 3, 12, 0, 0, tzinfo=timezone.utc).timestamp() * 1000
 DID = "did:cheqd:testnet:0c3581f0-011f-4263-b1ca-15ad70d54ede"
+COLLECTION = "0c3581f0-011f-4263-b1ca-15ad70d54ede"
 RESOURCE_ID = "1a79a313-8fc3-421c-af3d-34730fa046d1"
 BASE = "https://resolver.test/1.0/identifiers"
 NAME = "trust-config"
@@ -38,6 +39,7 @@ def world(content, **opts) -> dict:
         "resourceId": RESOURCE_ID,
         "resourceName": NAME,
         "resourceType": KIND,
+        "resourceCollectionId": COLLECTION,
         "resourceVersion": "2026-11-01T00:00:00Z",
         "checksum": checksum,
         "nextVersionId": None,
@@ -91,6 +93,41 @@ async def test_a_checksum_that_does_not_match_the_bytes_is_rejected():
     )
     assert result.ok is False
     assert "checksum_mismatch" in result.reasons
+
+
+async def test_a_resource_bound_to_a_different_did_collection_is_rejected_even_with_matching_kind_name():
+    # Regression: resolve_manifest used to check only (resourceType, resourceName), never that the
+    # returned resource's resourceCollectionId actually belongs to the DID being resolved - so a
+    # resolver answering with metadata from a DIFFERENT DID's collection (bug, misconfiguration, or
+    # compromise) would be accepted as long as that other collection happened to have a resource of
+    # the same kind and name. TS's equivalent check (`collection_mismatch`, PR #43) must be ported
+    # here too.
+    w = world({"a": 1}, linked={"resourceCollectionId": "99999999-9999-4999-8999-999999999999"})
+    result = await resolve_manifest(
+        DID,
+        KIND,
+        NAME,
+        ResolveManifestOptions(resolvers=[BASE], fetch=fetch_for(w), primitives=PRIMITIVES, now=lambda: NOW),
+    )
+    assert result.ok is False
+    assert "collection_mismatch" in result.reasons
+
+
+async def test_a_malformed_did_is_rejected_without_any_fetch():
+    # An untrusted DID string must be validated before any fetch is constructed or sent, not only
+    # before trusting a resolver's answer - a malformed `did` (e.g. one containing a dot-segment a
+    # URL implementation would normalise away) must not trigger an outbound request at all.
+    w = world({"a": 1})
+    fetch = fetch_for(w)
+    result = await resolve_manifest(
+        "did:cheqd:testnet:VICTIM0000000000/../did:cheqd:testnet:ATTACKER00000000",
+        KIND,
+        NAME,
+        ResolveManifestOptions(resolvers=[BASE], fetch=fetch, primitives=PRIMITIVES, now=lambda: NOW),
+    )
+    assert result.ok is False
+    assert "unsupported_did" in result.reasons
+    assert fetch.calls["count"] == 0
 
 
 async def test_the_wrong_manifest_kind_at_the_same_name_is_rejected():
@@ -226,3 +263,25 @@ async def test_clear_drops_cached_entries():
     cache.clear()
     await cache.get(DID, KIND, NAME)
     assert fetch.calls["count"] == 4
+
+
+async def test_the_cache_evicts_the_oldest_entry_once_max_entries_is_reached():
+    # Regression: the cache was an unbounded dict - expired entries are only ever overwritten on
+    # the same key, never evicted, so a caller presenting a fresh, distinct resource_name per call
+    # (e.g. an a2a trustConfigRef, which is caller-controlled) grows it by one entry per call,
+    # forever. With max_entries=3, a 4th distinct key must evict the oldest rather than grow to 4.
+    w = world({"a": 1})
+    cache = create_manifest_cache(
+        ManifestCacheOptions(
+            resolvers=[BASE],
+            fetch=fetch_for(w),
+            primitives=PRIMITIVES,
+            now=lambda: NOW,
+            default_ttl_ms=60_000,
+            max_entries=3,
+        )
+    )
+    for i in range(10):
+        await cache.get(DID, KIND, f"resource-{i}")
+        assert cache.size() <= 3
+    assert cache.size() == 3

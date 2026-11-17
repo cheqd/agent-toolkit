@@ -72,6 +72,23 @@ test('a resource bound to a different DID collection is rejected even with match
 	assert.ok(result.reasons.includes('collection_mismatch'));
 });
 
+// Regression: the DID-format check (collectionIdOf) used to run only once the resolver's answer
+// was being validated, so a malformed `did` still triggered an outbound fetch before being
+// rejected. The check must happen before any fetch is constructed or sent.
+test('a malformed DID is rejected without any fetch', async () => {
+	const w = world({ a: 1 });
+	const fetch = fetchFor(w);
+	const result = await resolveManifest(
+		'did:cheqd:testnet:VICTIM0000000000/../did:cheqd:testnet:ATTACKER00000000',
+		KIND,
+		NAME,
+		{ resolvers: [BASE], fetch, primitives, now: () => NOW },
+	);
+	assert.equal(result.ok, false);
+	assert.ok(result.reasons.includes('unsupported_did'));
+	assert.equal(fetch.calls(), 0);
+});
+
 test('the wrong manifest kind at the same name is rejected', async () => {
 	const w = world({ a: 1 }, { linked: { resourceType: 'CapabilityManifest' } });
 	const result = await resolveManifest(DID, KIND, NAME, { resolvers: [BASE], fetch: fetchFor(w), primitives, now: () => NOW });
@@ -151,4 +168,20 @@ test('clear() drops cached entries', async () => {
 	cache.clear();
 	await cache.get(DID, KIND, NAME);
 	assert.equal(fetch.calls(), 4);
+});
+
+// Regression: the cache was an unbounded Map - expired entries are only ever overwritten on the
+// same key, never evicted, so a caller presenting a fresh, distinct resourceName per call (e.g.
+// an a2a trustConfigRef, which is caller-controlled) grows it by one entry per call, forever.
+// With maxEntries: 3, a 4th distinct key must evict the oldest rather than grow to 4.
+test('the cache evicts the oldest entry once maxEntries is reached', async () => {
+	const w = world({ a: 1 });
+	const cache = createManifestCache({
+		resolvers: [BASE], fetch: fetchFor(w), primitives, now: () => NOW, defaultTtlMs: 60_000, maxEntries: 3,
+	});
+	for (let i = 0; i < 10; i++) {
+		await cache.get(DID, KIND, `resource-${i}`);
+		assert.ok(cache.size() <= 3);
+	}
+	assert.equal(cache.size(), 3);
 });

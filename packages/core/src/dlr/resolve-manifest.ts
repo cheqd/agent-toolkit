@@ -96,9 +96,16 @@ export async function resolveManifest(
 		const minAgreement = options.minAgreement ?? 1;
 		if (!Number.isInteger(minAgreement) || minAgreement < 1) fail('invalid_min_agreement');
 		if (options.resolvers.length < minAgreement) fail('not_enough_resolvers');
+		// Validate the DID's shape before any fetch is constructed or sent - not merely before
+		// trusting the returned resource's resourceCollectionId. An attacker-controlled malformed
+		// `did` (e.g. containing a dot-segment a URL implementation would normalise away) must not
+		// trigger an outbound request at all.
+		const collectionId = collectionIdOf(did);
 		const bases = options.resolvers.map((base) => normaliseBase(base, options.allowInsecureResolvers === true));
 
-		const settled = await Promise.allSettled(bases.map((base) => checkOne(base, did, kind, resourceName, options)));
+		const settled = await Promise.allSettled(
+			bases.map((base) => checkOne(base, did, kind, resourceName, collectionId, options)),
+		);
 		const agreed: { base: string; outcome: Outcome }[] = [];
 		const reasons: string[] = [];
 		settled.forEach((result, i) => {
@@ -138,6 +145,7 @@ async function checkOne(
 	did: string,
 	kind: ManifestKind,
 	resourceName: string,
+	collectionId: string,
 	options: ResolveManifestOptions,
 ): Promise<Outcome> {
 	const now = options.now ?? Date.now;
@@ -162,7 +170,7 @@ async function checkOne(
 	// a resolver happened to answer with - see ledger-anchored.ts's identical check for why: a
 	// resolver returning metadata for a different DID's collection (bug, misconfiguration, or
 	// compromise) must not be accepted just because it has a matching resourceType/resourceName.
-	if (resource['resourceCollectionId'] !== collectionIdOf(did)) fail('collection_mismatch');
+	if (resource['resourceCollectionId'] !== collectionId) fail('collection_mismatch');
 	if (resource['resourceType'] !== kind || resource['resourceName'] !== resourceName) fail('resource_mismatch');
 	if (resource['nextVersionId'] !== null && resource['nextVersionId'] !== undefined) fail('not_latest_version');
 	const resourceId = resource['resourceId'];
@@ -211,6 +219,16 @@ export interface ManifestCacheOptions extends ResolveManifestOptions {
 	readonly ttlMsByKind?: Partial<Record<ManifestKind, number>>;
 	/** TTL for a kind not listed in `ttlMsByKind`. Default 5 minutes. */
 	readonly defaultTtlMs?: number;
+	/**
+	 * Hard cap on cache entries, with oldest-entry eviction once reached. Default 1000. The cache
+	 * key is `(did, kind, resourceName)` and `resourceName` is caller-supplied (e.g. an a2a
+	 * `trustConfigRef`) - a caller presenting a fresh, distinct name every call, and failing or
+	 * succeeding either way, would otherwise grow this Map forever (same unbounded-growth vector
+	 * as `createTrustExtensionCache`'s `maxEntries`, see PR #36). Once the cap is hit, the oldest
+	 * entry (by insertion order, which `Map` preserves) is evicted to make room - not a full LRU,
+	 * but enough to bound memory.
+	 */
+	readonly maxEntries?: number;
 }
 
 interface CacheEntry {
@@ -224,12 +242,16 @@ export interface ManifestCache {
 	get(did: string, kind: ManifestKind, resourceName: string): Promise<ResolveManifestResult>;
 	/** Drops every cached entry. */
 	clear(): void;
+	/** Current number of cached entries. Exposed for tests/observability, not part of the trust decision. */
+	size(): number;
 }
 
 const DEFAULT_TTL_MS = 5 * 60_000;
+const DEFAULT_MAX_ENTRIES = 1000;
 
 export function createManifestCache(options: ManifestCacheOptions): ManifestCache {
 	const now = options.now ?? Date.now;
+	const maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
 	const cache = new Map<string, CacheEntry>();
 	return {
 		async get(did, kind, resourceName) {
@@ -238,11 +260,21 @@ export function createManifestCache(options: ManifestCacheOptions): ManifestCach
 			if (cached && cached.expiresAt > now()) return cached.result;
 			const result = await resolveManifest(did, kind, resourceName, options);
 			const ttl = options.ttlMsByKind?.[kind] ?? options.defaultTtlMs ?? DEFAULT_TTL_MS;
+			// A fresh lookup for an existing key must not grow the entry count, so evict (if
+			// needed) only when this key is new - otherwise a cache at exactly maxEntries would
+			// evict one entry on every refresh of an already-tracked key for no reason.
+			if (!cache.has(key) && cache.size >= maxEntries) {
+				const oldest = cache.keys().next().value;
+				if (oldest !== undefined) cache.delete(oldest);
+			}
 			cache.set(key, { result, expiresAt: now() + ttl });
 			return result;
 		},
 		clear() {
 			cache.clear();
+		},
+		size() {
+			return cache.size;
 		},
 	};
 }
