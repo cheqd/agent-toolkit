@@ -23,10 +23,23 @@
 export interface MinimalDidDocument {
 	readonly id: string;
 	readonly verificationMethod?: readonly MinimalVerificationMethod[];
+	/**
+	 * Ids (or embedded methods) of keys this DID actually signs with. `@kya-os/mcp` 1.23.0+'s
+	 * `createStatusListProofVerifier` requires a status-list signing key to be listed here, not
+	 * merely under `verificationMethod` - see `eddsa-jcs-status.ts`'s `createCheqdStatusChecker`.
+	 * Not read by this module's own `kid`-based Agent Card key resolution.
+	 */
+	readonly assertionMethod?: readonly (string | MinimalVerificationMethod)[];
 }
 
 export interface MinimalVerificationMethod {
 	readonly id: string;
+	/**
+	 * Required by `@kya-os/mcp` 1.23.0+'s `assertionMethod` lookup (W3C Controlled Identifiers v1.0
+	 * §3.3 step 8: a retrieved method must have a non-empty `id`, `type` and `controller`) - not
+	 * read by this module's own Agent Card key resolution.
+	 */
+	readonly type?: string;
 	readonly controller?: string;
 	readonly publicKeyJwk?: Record<string, unknown>;
 	readonly publicKeyMultibase?: string;

@@ -713,11 +713,48 @@ hand before trusting the CI job's continued pass is still testing the same thing
 
 ---
 
-## D19. `verifyTrustExtension`'s three checks, tested together with real building blocks, not just individually mocked
+## D19. Real cross-language AP2 conformance - one real bug found (transaction_data_hash wasn't canonical)
 
-> **Numbering note:** written on a branch cut from the same point as the PR that added AP2's
-> cross-language conformance work, also numbered D19 there. Whichever merges second should
-> renumber to D20 - flagged here so it isn't missed.
+**Context.** D16-D18 gave `a2a` a real cross-language conformance run in both directions;
+`ap2` never had one. D11 chose PyPI's `sd-jwt` as the Python stand-in for `@sd-jwt/core`, but
+nobody had ever proven the two sides actually produce and accept the same compact SD-JWT-VC +
+Key Binding JWT wire format - each language's own test suite only ever round-tripped against
+itself.
+
+**What was built.** `conformance/cross-language-ap2-sd-jwt.mjs` (TS) and
+`python/packages/ap2/conformance_cross_language.py` (Python), the same `mint`/`verify` shape as
+D18's `a2a` scripts, committed and wired into CI (`.github/workflows/cross-language.yml`'s new
+`ap2-sd-jwt` job): each side issues a real `OpenPaymentMandate` SD-JWT-VC with its own library's
+real issuance API, presents it with a real Ed25519 Key Binding JWT bound to a fixed
+`CLOSED_PAYMENT`'s `transaction_data` hash, and the other side verifies it with
+`verifyOpenPaymentMandatePresentation`/`verify_open_payment_mandate_presentation` +
+`verifyTransactionDataBinding`/`verify_transaction_data_binding`, unmodified.
+
+**Result: one real bug found, on the first run.** `transactionDataHash` (TS) hashed
+`JSON.stringify(closedMandateContent)`; `transaction_data_hash` (Python) hashed
+`json.dumps(closed_mandate_content)`. Both are valid JSON for the same object, but their
+default whitespace differs (`json.dumps` inserts a space after `:`/`,`, `JSON.stringify` does
+not), so the two languages computed different hashes for byte-identical content. Every
+cross-language presentation failed `verifyTransactionDataBinding` with
+`transaction_data_binding_failed` - confirmed in both directions before the fix, this was not a
+test-authoring mistake. **Fix:** both functions now hash RFC 8785 (JCS) canonical JSON instead
+of each language's default serializer - `json-canonicalize` (TS, already a dependency of
+`core`, newly added to `ap2`) and `rfc8785` (Python, already used by `core`, newly added to
+`ap2`'s pyproject). Same library family this programme already uses everywhere else a hash
+needs to agree across languages (D10's `eddsa-jcs-2022`, the A2A proof profile).
+
+**Consequences.** `ap2`'s closed-mandate transaction binding is now proven cross-language
+interoperable, not merely internally consistent per language, and re-verified on every push.
+This also closes the asymmetry flagged when `ap2`'s release readiness was last reviewed: `a2a`
+had a cross-language conformance run, `ap2` did not.
+
+**Revisit-if:** either SD-JWT library changes its issuance/presentation wire format, or a third
+language/implementation joins this programme and needs the same `transactionDataHash`
+agreement - re-run both directions by hand first.
+
+---
+
+## D20. `verifyTrustExtension`'s three checks, tested together with real building blocks, not just individually mocked
 
 **Context.** `packages/a2a/test/trust-extension.test.mjs` tested `verifyTrustExtension`'s three
 checks (reciprocal `alsoKnownAs` linkage, DID-Linked Resource manifest resolution, status) only

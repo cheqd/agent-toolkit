@@ -64,3 +64,62 @@ jobs:
             echo "::error::tampered Python-minted request was accepted by the TS userBuilder"
             exit 1
           fi
+
+  ap2-sd-jwt:
+    name: "AP2 open-mandate SD-JWT-VC conformance (TS <-> Python)"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build TS packages
+        run: npm run build
+
+      - name: Install Poetry
+        run: pipx install poetry==2.5.1
+
+      - name: Install Python ap2 package
+        working-directory: python/packages/ap2
+        run: poetry install --no-interaction
+
+      - name: TS issuer+holder mint, real Python verifier accepts (and rejects on tamper)
+        run: |
+          node conformance/cross-language-ap2-sd-jwt.mjs mint > /tmp/ts-ap2-mint.json
+          (cd python/packages/ap2 && poetry run python conformance_cross_language.py verify) < /tmp/ts-ap2-mint.json
+          python3 -c "
+          import json
+          d = json.load(open('/tmp/ts-ap2-mint.json'))
+          d['token'] = d['token'][:-4] + 'AAAA'
+          json.dump(d, open('/tmp/ts-ap2-mint-tampered.json', 'w'))
+          "
+          if (cd python/packages/ap2 && poetry run python conformance_cross_language.py verify) < /tmp/ts-ap2-mint-tampered.json; then
+            echo "::error::tampered TS-minted presentation was accepted by the Python verifier"
+            exit 1
+          fi
+
+      - name: Python issuer+holder mint, real TS verifier accepts (and rejects on tamper)
+        run: |
+          (cd python/packages/ap2 && poetry run python conformance_cross_language.py mint) > /tmp/py-ap2-mint.json
+          node conformance/cross-language-ap2-sd-jwt.mjs verify < /tmp/py-ap2-mint.json
+          python3 -c "
+          import json
+          d = json.load(open('/tmp/py-ap2-mint.json'))
+          d['token'] = d['token'][:-4] + 'AAAA'
+          json.dump(d, open('/tmp/py-ap2-mint-tampered.json', 'w'))
+          "
+          if node conformance/cross-language-ap2-sd-jwt.mjs verify < /tmp/py-ap2-mint-tampered.json; then
+            echo "::error::tampered Python-minted presentation was accepted by the TS verifier"
+            exit 1
+          fi
