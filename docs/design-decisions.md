@@ -713,6 +713,48 @@ hand before trusting the CI job's continued pass is still testing the same thing
 
 ---
 
+## D19. `verifyTrustExtension`'s three checks, tested together with real building blocks, not just individually mocked
+
+> **Numbering note:** written on a branch cut from the same point as the PR that added AP2's
+> cross-language conformance work, also numbered D19 there. Whichever merges second should
+> renumber to D20 - flagged here so it isn't missed.
+
+**Context.** `packages/a2a/test/trust-extension.test.mjs` tested `verifyTrustExtension`'s three
+checks (reciprocal `alsoKnownAs` linkage, DID-Linked Resource manifest resolution, status) only
+one at a time, each against a hand-rolled fake standing in for `@cheqd/agent-identity`'s own
+`resolveDidDocument`/`manifestCache` - by the file's own top comment, deliberately, so as not to
+re-test `packages/core`'s building blocks. That left a real gap open: no test ever declared all
+three checks together, the way a real deployment's Agent Card activation would, and none used
+the real `createManifestCache`/`resolveManifest` - only a fake `manifestCache.get` that always
+answered `{ ok: true }` or `{ ok: false }` outright, never actually resolving or checksumming
+anything.
+
+**What was added.** Two tests, using the real `createManifestCache` from `@cheqd/agent-identity`
+(not a mock) alongside a real reciprocal-linkage-shaped DID document fixture, with all three
+activation parameters (`anchoredDid`, `trustConfigRef`, `statusCheck: 'required'`) declared at
+once: one confirms the whole composed flow passes when linkage, a real checksummed manifest
+fetch, and status all check out; the other confirms it still fails closed when the real manifest
+resolution's own checksum check rejects a tampered resource, with the other two checks otherwise
+passing. Only the HTTP resolver and the status checker are faked - the two seams that are always
+deployment-specific regardless.
+
+**Result: no bug found, but a real gap closed.** Unlike D16-D19's cross-language runs, this
+didn't surface new incompatible behaviour - `verifyTrustExtension`'s composition was already
+correct. What changed is that this is now demonstrated with the real manifest-resolution code
+path exercised end to end (real checksum check included), not asserted only against a fake that
+could always be made to answer whatever the test wanted.
+
+**Consequences.** Closes the item flagged in the findings doc's "Not done" list: "`did:cheqd`
+discovery end to end ... was not tested" - now covered as a single composed flow using real
+building blocks, short of a live network call against cheqd testnet infrastructure (still not
+done; tracked separately).
+
+**Revisit-if:** `@cheqd/agent-identity`'s `createManifestCache`/`resolveManifest` signature
+changes - this test wires them in directly, not through a mock, so it breaks loudly rather than
+silently going stale.
+
+---
+
 ## What this document doesn't cover
 
 - **The full threat model and negative-vector suite** — `docs/security/threat-model.md`,
