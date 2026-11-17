@@ -58,7 +58,9 @@ def world():
         return MinimalDidDocument(
             id=DID,
             verification_method=(
-                MinimalVerificationMethod(id=KID, type="JsonWebKey2020", controller=DID, public_key_jwk=public_key_jwk),
+                MinimalVerificationMethod(
+                    id=KID, type="JsonWebKey2020", controller=DID, public_key_jwk=public_key_jwk
+                ),
             ),
             assertion_method=(KID,),
         )
@@ -126,7 +128,9 @@ async def test_a_key_listed_only_under_authentication_not_assertion_method_fails
         return MinimalDidDocument(
             id=DID,
             verification_method=(
-                MinimalVerificationMethod(id=KID, type="JsonWebKey2020", controller=DID, public_key_jwk=public_key_jwk),
+                MinimalVerificationMethod(
+                    id=KID, type="JsonWebKey2020", controller=DID, public_key_jwk=public_key_jwk
+                ),
             ),
             assertion_method=(),  # explicitly NOT listed here
         )
@@ -179,7 +183,9 @@ async def test_a_document_with_no_assertion_method_at_all_fails_even_with_a_matc
         return MinimalDidDocument(
             id=DID,
             verification_method=(
-                MinimalVerificationMethod(id=KID, type="JsonWebKey2020", controller=DID, public_key_jwk=public_key_jwk),
+                MinimalVerificationMethod(
+                    id=KID, type="JsonWebKey2020", controller=DID, public_key_jwk=public_key_jwk
+                ),
             ),
         )
 
