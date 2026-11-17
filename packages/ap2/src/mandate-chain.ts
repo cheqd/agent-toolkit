@@ -9,7 +9,14 @@
  */
 import { createHash } from 'node:crypto';
 import { checkCheckoutConstraints, checkPaymentConstraints } from './constraints.js';
-import type { Checkout, CheckoutMandate, MandateContext, OpenCheckoutMandate, OpenPaymentMandate, PaymentMandate } from './types.js';
+import type {
+	Checkout,
+	CheckoutMandate,
+	MandateContext,
+	OpenCheckoutMandate,
+	OpenPaymentMandate,
+	PaymentMandate,
+} from './types.js';
 
 function base64UrlDecode(input: string): Buffer {
 	return Buffer.from(input.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
@@ -35,10 +42,26 @@ export class PaymentMandateChain {
 	 * `transaction_id`; `expectedOpenCheckoutHash` is forwarded to any `payment.reference`
 	 * constraint. Returns violation messages, or an empty array if none.
 	 */
-	verify(options: { expectedTransactionId?: string; expectedOpenCheckoutHash?: string; mandateContext?: MandateContext } = {}): string[] {
-		const violations = checkPaymentConstraints(this.openMandate, this.closedMandate, options.expectedOpenCheckoutHash, options.mandateContext);
-		if (options.expectedTransactionId !== undefined && options.expectedTransactionId !== this.closedMandate.transaction_id) {
-			violations.push(`Payment transaction_id mismatch: expected ${options.expectedTransactionId}, got ${this.closedMandate.transaction_id}`);
+	verify(
+		options: {
+			expectedTransactionId?: string;
+			expectedOpenCheckoutHash?: string;
+			mandateContext?: MandateContext;
+		} = {},
+	): string[] {
+		const violations = checkPaymentConstraints(
+			this.openMandate,
+			this.closedMandate,
+			options.expectedOpenCheckoutHash,
+			options.mandateContext,
+		);
+		if (
+			options.expectedTransactionId !== undefined &&
+			options.expectedTransactionId !== this.closedMandate.transaction_id
+		) {
+			violations.push(
+				`Payment transaction_id mismatch: expected ${options.expectedTransactionId}, got ${this.closedMandate.transaction_id}`,
+			);
 		}
 		return violations;
 	}
@@ -56,7 +79,13 @@ export class CheckoutMandateChain {
 
 	/**
 	 * Verify the chain's constraints against the decoded `checkout_jwt` payload.
-	 * `expectedCheckoutHash` checks the closed mandate's `checkout_hash`.
+	 *
+	 * The `checkoutJwt` passed in is always hash-bound to the closed mandate: this method
+	 * recomputes `sha256Base64Url(checkoutJwt)` and requires it to equal
+	 * `closedMandate.checkout_hash` (and, belt-and-suspenders, requires `checkoutJwt` to equal
+	 * `closedMandate.checkout_jwt` verbatim). This is unconditional - it does not depend on the
+	 * caller separately supplying `expectedCheckoutHash`, which only performs an *additional*
+	 * check of the caller's own expectation against the closed mandate's own field.
 	 */
 	verify(checkoutJwt: string, options: { expectedCheckoutHash?: string } = {}): string[] {
 		let checkout: Checkout;
@@ -67,8 +96,26 @@ export class CheckoutMandateChain {
 		}
 
 		const violations = checkCheckoutConstraints(this.openMandate, checkout);
-		if (options.expectedCheckoutHash !== undefined && options.expectedCheckoutHash !== this.closedMandate.checkout_hash) {
-			violations.push(`Checkout checkout_hash mismatch: expected ${options.expectedCheckoutHash}, got ${this.closedMandate.checkout_hash}`);
+
+		const computedCheckoutHash = sha256Base64Url(checkoutJwt);
+		if (computedCheckoutHash !== this.closedMandate.checkout_hash) {
+			violations.push(
+				`Checkout checkout_hash binding failed: sha256Base64Url(checkoutJwt) is ${computedCheckoutHash}, but closedMandate.checkout_hash is ${this.closedMandate.checkout_hash}`,
+			);
+		}
+		if (checkoutJwt !== this.closedMandate.checkout_jwt) {
+			violations.push(
+				'Checkout checkout_jwt mismatch: the checkout_jwt being verified is not the one closedMandate.checkout_jwt committed to',
+			);
+		}
+
+		if (
+			options.expectedCheckoutHash !== undefined &&
+			options.expectedCheckoutHash !== this.closedMandate.checkout_hash
+		) {
+			violations.push(
+				`Checkout checkout_hash mismatch: expected ${options.expectedCheckoutHash}, got ${this.closedMandate.checkout_hash}`,
+			);
 		}
 		return violations;
 	}
@@ -84,13 +131,22 @@ function extractParsedCheckoutObject(checkoutJwt: string): Checkout {
 	try {
 		decoded = JSON.parse(base64UrlDecode(parts[1] as string).toString('utf8'));
 	} catch (error) {
-		throw new Error(`Invalid JSON in checkout_jwt payload: ${error instanceof Error ? error.message : String(error)}`, {
-			cause: error,
-		});
+		throw new Error(
+			`Invalid JSON in checkout_jwt payload: ${error instanceof Error ? error.message : String(error)}`,
+			{
+				cause: error,
+			},
+		);
 	}
-	if (typeof decoded !== 'object' || decoded === null) throw new Error('checkout_jwt payload failed schema validation: not an object');
+	if (typeof decoded !== 'object' || decoded === null)
+		throw new Error('checkout_jwt payload failed schema validation: not an object');
 	const record = decoded as Record<string, unknown>;
-	if (typeof record.id !== 'string' || !Array.isArray(record.line_items) || typeof record.status !== 'string' || typeof record.currency !== 'string') {
+	if (
+		typeof record.id !== 'string' ||
+		!Array.isArray(record.line_items) ||
+		typeof record.status !== 'string' ||
+		typeof record.currency !== 'string'
+	) {
 		throw new Error('checkout_jwt payload failed schema validation: missing required Checkout fields');
 	}
 	return decoded as Checkout;

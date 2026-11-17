@@ -82,7 +82,14 @@ class CheckoutMandateChain:
 
     def verify(self, checkout_jwt: str, *, expected_checkout_hash: str | None = None) -> list[str]:
         """Verify the chain's constraints against the decoded `checkout_jwt` payload.
-        `expected_checkout_hash` checks the closed mandate's `checkout_hash`.
+
+        The `checkout_jwt` passed in is always hash-bound to the closed mandate: this method
+        recomputes `sha256_base64url(checkout_jwt)` and requires it to equal
+        `closed_mandate["checkout_hash"]` (and, belt-and-suspenders, requires `checkout_jwt` to
+        equal `closed_mandate["checkout_jwt"]` verbatim). This is unconditional - it does not
+        depend on the caller separately supplying `expected_checkout_hash`, which only performs
+        an *additional* check of the caller's own expectation against the closed mandate's own
+        field.
         """
         try:
             checkout = _extract_parsed_checkout_object(checkout_jwt)
@@ -90,6 +97,20 @@ class CheckoutMandateChain:
             return [str(error)]
 
         violations = check_checkout_constraints(self.open_mandate, checkout)
+
+        computed_checkout_hash = sha256_base64url(checkout_jwt)
+        if computed_checkout_hash != self.closed_mandate["checkout_hash"]:
+            violations.append(
+                "Checkout checkout_hash binding failed: sha256_base64url(checkout_jwt) is "
+                f"{computed_checkout_hash}, but closed_mandate['checkout_hash'] is "
+                f"{self.closed_mandate['checkout_hash']}"
+            )
+        if checkout_jwt != self.closed_mandate["checkout_jwt"]:
+            violations.append(
+                "Checkout checkout_jwt mismatch: the checkout_jwt being verified is not the "
+                "one closed_mandate['checkout_jwt'] committed to"
+            )
+
         if (
             expected_checkout_hash is not None
             and expected_checkout_hash != self.closed_mandate["checkout_hash"]
