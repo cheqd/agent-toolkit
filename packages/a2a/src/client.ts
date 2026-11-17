@@ -29,7 +29,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-import { SendMessageRequest, Task } from '@a2a-js/sdk';
+import { Message, SendMessageRequest, Task } from '@a2a-js/sdk';
 import { ClientCallContext, ClientCallContextKey, type RequestOptions } from '@a2a-js/sdk/client';
 import { randomBytes } from 'node:crypto';
 import { buildCardProof } from '@kya-os/mcp/card';
@@ -112,9 +112,20 @@ export function createProofInterceptor(options: ProofInterceptorOptions) {
 				state.lastResponseCheck = check;
 				throw new Error(`A2A response proof verification failed: ${check.reason}`);
 			}
-			const task = args.result.value as Record<string, unknown>;
-			if (!('status' in task)) return;
-			const json = Task.toJSON(task as never) as Record<string, unknown>;
+			const task = args.result.value as Record<string, unknown> | null | undefined;
+			if (!task) return;
+			// Both a Task and a Message result are checked against the response proof. A
+			// Message result used to skip this check entirely ("nothing to prove here yet" on
+			// the server side), which let anyone who could answer in the server's place (a
+			// compromised proxy, TLS terminator, DNS hijack) substitute an arbitrary, unproven
+			// Message for what should have been a proven Task - and this client would never
+			// notice. See wrapper.ts's matching fix, which now signs a response proof for a
+			// Message result too, so this check applies uniformly and fails closed either way.
+			const isTask = 'status' in task;
+			const json = (isTask ? Task.toJSON(task as never) : Message.toJSON(task as never)) as Record<
+				string,
+				unknown
+			>;
 			const proof = (json.metadata as Record<string, unknown> | undefined)?.[RESPONSE_PROOF_META_KEY];
 			if (!proof) {
 				const check: ResponseProofCheck = { valid: false, reason: 'no response proof' };

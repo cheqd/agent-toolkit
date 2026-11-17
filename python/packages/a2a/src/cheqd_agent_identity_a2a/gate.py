@@ -172,17 +172,32 @@ class AgentIdentityGate:
         self._response_proof = response_proof
         self._trust_extension = trust_extension
 
+    async def verify_and_enforce(self, method: str, params: Any) -> VerifiedCaller:
+        """Runs request-proof verification and enforcement for `method` without invoking a
+        handler or producing a response proof - the shared first half of
+        `handle_send_message`, reused as-is by the streaming gate
+        (`proto_bridge.wrap_on_message_send_stream`), which has no single final result to
+        prove over (see TypeScript's `wrapper.ts` `sendMessageStream`: streaming is out of
+        scope for response proofs, by construction, not convention).
+        """
+        user = await verify_caller(method, params, self._verify_deps)
+        return await enforce(user, self._trust_extension)
+
     async def handle_send_message(
         self, method: str, params: Any, call_through: Callable[[], Awaitable[Any]]
     ) -> Any:
         """`params`/the return of `call_through` MUST already be JSON-safe dicts (the
         integrator's own proto<->dict conversion, not this gate's - see module docstring).
         """
-        user = await verify_caller(method, params, self._verify_deps)
-        caller = await enforce(user, self._trust_extension)
+        caller = await self.verify_and_enforce(method, params)
         result = await call_through()
-        if not isinstance(result, dict) or "status" not in result:
-            return result  # a Message, not a Task - nothing to prove here yet
+        if not isinstance(result, dict):
+            return result
+        # Both a Task and a Message result get a response proof. A `Message` result used to
+        # pass through unsigned ("nothing to prove here yet") - but that let anyone who could
+        # answer in the server's place substitute an arbitrary, unproven `Message` for what
+        # should have been a proven `Task`, and the client (see `client.py`'s matching fix)
+        # had no way to tell. Proving every result closes that gap instead of special-casing it.
         data = covered_result(result)
         session = ResponseProofSession(session_id="a2a-stateless", audience=caller.did)
         req = CanonicalRequest(method=caller.covered.method, params=caller.covered.params)

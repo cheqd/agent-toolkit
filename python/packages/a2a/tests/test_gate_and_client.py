@@ -249,17 +249,51 @@ async def test_a_replayed_request_proof_is_rejected_on_the_second_call():
     assert "nonce_replayed" in exc_info.value.reason
 
 
-async def test_a_message_result_passes_through_unsigned_nothing_to_prove_yet():
+async def test_a_message_result_also_gets_a_response_proof_closing_the_non_task_bypass():
+    # Regression test for the MEDIUM finding: a Message result used to pass through
+    # unsigned ("nothing to prove here yet"), which meant the client had nothing to check
+    # for a Message result and would silently accept one substituted in place of a proven
+    # Task. The gate must sign a response proof for a Message result exactly as it does for
+    # a Task result, so the client (see the matching test below) can always verify.
     world = World()
     gate = world.gate()
     interceptor = world.interceptor()
-    params, _ = await interceptor.before("SendMessage", {"message": {"content": "hello"}})
+    call = await interceptor.before("SendMessage", {"message": {"content": "hello"}})
 
     async def message_handler():
         return {"role": "agent", "content": "just a message, not a task"}
 
-    result = await gate.handle_send_message("SendMessage", params, message_handler)
-    assert "metadata" not in result
+    result = await gate.handle_send_message("SendMessage", call.params, message_handler)
+    assert "org.kya-os/response-proof" in result["metadata"]
+
+    await interceptor.after("SendMessage", result, call)
+    assert interceptor.state.last_response_check.valid is True
+
+
+async def test_a_substituted_unproven_message_result_is_flagged_invalid_not_silently_accepted():
+    # Regression test for the MEDIUM finding, client side: before the fix, client.after()
+    # returned early for any result with no "status" field (i.e. a Message, not a Task)
+    # without checking anything at all - `state.last_response_check` was simply never set,
+    # so a caller inspecting it could not tell the difference between "nothing to check"
+    # and "verified". A party able to answer in the server's place (a compromised proxy,
+    # TLS terminator, DNS hijack) could substitute an arbitrary Message - with no proof at
+    # all - for what should have been a proven Task, and this client accepted it.
+    world = World()
+    gate = world.gate()
+    interceptor = world.interceptor()
+    call = await interceptor.before("SendMessage", {"message": {"content": "hello"}})
+
+    # The real handler would have returned a genuine, proven Task via `gate.handle_send_message`.
+    # Simulate a man-in-the-middle substituting an unproven Message instead - no "status" key,
+    # no response-proof metadata at all.
+    substituted = {"role": "agent", "content": "ATTACKER SUBSTITUTED MESSAGE, NEVER PROVEN"}
+
+    with pytest.raises(ResponseProofVerificationError) as exc_info:
+        await interceptor.after("SendMessage", substituted, call)
+    assert exc_info.value.code == "no_response_proof"
+    assert interceptor.state.last_response_check is not None
+    assert interceptor.state.last_response_check.valid is False
+    assert interceptor.state.last_response_check.reason == "no response proof"
 
 
 async def test_trust_extension_failure_rejects_an_otherwise_verified_caller():

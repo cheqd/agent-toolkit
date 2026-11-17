@@ -178,8 +178,15 @@ class ProofInterceptor:
             )
             self.state.last_response_check = check
             raise ResponseProofVerificationError("no_covered_request", check.reason)
-        if not isinstance(result, dict) or "status" not in result:
+        if not isinstance(result, dict):
             return
+        # Both a Task and a Message result are checked against the response proof. A
+        # Message result used to skip this check entirely ("nothing to prove here yet" on
+        # the server side), which let anyone who could answer in the server's place (a
+        # compromised proxy, TLS terminator, DNS hijack) substitute an arbitrary, unproven
+        # Message for what should have been a proven Task - and this client would never
+        # notice. See `gate.py`'s matching fix, which now signs a response proof for a
+        # Message result too, so this check applies uniformly.
         proof = (result.get("metadata") or {}).get(RESPONSE_PROOF_META_KEY)
         if not proof:
             check = ResponseProofCheck(valid=False, reason="no response proof")
