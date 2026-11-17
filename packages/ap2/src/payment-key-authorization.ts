@@ -67,8 +67,25 @@ export async function verifyAgentPaymentKeyCredential(
 	if (credential.credentialSubject.id !== primaryAgentDid) return { ok: false, reason: 'not_self_issued' };
 
 	const now = deps.now ?? Date.now;
+
+	const validFrom = credential.validFrom;
+	if (validFrom !== undefined) {
+		// Date.parse(validFrom) is NaN for an unparseable string, and every comparison against
+		// NaN is false - so `Date.parse(validFrom) > now()` alone would fail OPEN (treated as
+		// already valid) for a malformed validFrom. Fail closed, matching validUntil below.
+		const startsAt = Date.parse(validFrom);
+		if (Number.isNaN(startsAt) || startsAt > now()) return { ok: false, reason: 'credential_not_yet_valid' };
+	}
+
 	const validUntil = credential.validUntil;
-	if (validUntil !== undefined && Date.parse(validUntil) <= now()) return { ok: false, reason: 'credential_expired' };
+	if (validUntil !== undefined) {
+		// Date.parse(validUntil) is NaN for an unparseable string, and every comparison against
+		// NaN is false - so the old `Date.parse(validUntil) <= now()` check alone failed OPEN
+		// (treated as not-yet-expired) for a malformed validUntil. Fail closed, matching the
+		// convention established in packages/core/src/status/ledger-anchored.ts (PR #43).
+		const expiresAt = Date.parse(validUntil);
+		if (Number.isNaN(expiresAt) || expiresAt <= now()) return { ok: false, reason: 'credential_expired' };
+	}
 
 	if (!(await verifyEddsaJcs2022(credential, deps.resolveDidDocument))) return { ok: false, reason: 'proof_invalid' };
 
