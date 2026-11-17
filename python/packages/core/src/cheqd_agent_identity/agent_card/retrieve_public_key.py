@@ -61,6 +61,12 @@ BASE58_ALPHABET_MAP = {char: index for index, char in enumerate(BASE58_ALPHABET)
 DEFAULT_DID_WEB_FETCH_TIMEOUT_SECONDS = 5.0
 DEFAULT_DID_WEB_MAX_RESPONSE_BYTES = 1_000_000
 
+# The longest a base58btc string legitimately needed here can be: 34 bytes (the Ed25519
+# multicodec-prefixed publicKeyMultibase form) base58-encodes to at most
+# ceil(34 * 8 / log2(58)) = 47 characters; the 32-byte raw publicKeyBase58 form needs fewer. 50
+# leaves a small margin, same rationale as eddsa_jcs_2022.py's MAX_PROOF_VALUE_BASE58_LEN.
+MAX_DID_KEY_BASE58_LEN = 50
+
 # Forbids every character that is structurally meaningful to a URL parser - '@' (authority/
 # userinfo separator - the SSRF-enabling case), '/' and '\' (path/authority separators), '#'
 # (fragment separator - silently truncates what the server actually receives), '?' (query
@@ -82,6 +88,20 @@ def _is_safe_did_web_segment(segment: str) -> bool:
     if any(ord(char) <= 0x20 or ord(char) == 0x7F for char in segment):
         return False
     return not any(char in _UNSAFE_DID_WEB_SEGMENT_CHARS for char in segment)
+
+
+def _is_allowed_did_web_segment_value(segment: str) -> bool:
+    """Rejects a decoded segment that is empty, '.', or '..' (review finding #8, the did:web
+    part). `_is_safe_did_web_segment` only forbids characters a URL parser would reinterpret as
+    new URL structure - it does not forbid a segment that a URL/path NORMALIZER later collapses
+    or discards. A '..' segment survives that charset check (every character in it is plain
+    ASCII) yet `did:web:host:users:bob:..:alice` builds
+    `https://host/users/bob/../alice/did.json`, which normalizes to
+    `https://host/users/alice/did.json` - fetching alice's path while the DID string
+    superficially named bob's. An empty segment (two adjacent ':'s, or '%3A%3A') is rejected for
+    the same reason: it is not meaningful path/host data either.
+    """
+    return len(segment) > 0 and segment != "." and segment != ".."
 
 
 @dataclass(frozen=True)
@@ -127,7 +147,12 @@ class _BoundedDidWebResponse:
 
 def _default_fetch_did_web(max_response_bytes: int) -> FetchDidWebDocument:
     async def fetch_did_web(url: str) -> DidWebResponse:
-        async with httpx.AsyncClient() as client:
+        # httpx.AsyncClient() already defaults to follow_redirects=False (unlike TS's fetch(),
+        # whose default is to follow) - a did:web host returning a 3xx therefore already fails
+        # the status_code != 200 check below rather than being silently chased to another host.
+        # Set explicitly anyway (review finding #5): defense in depth against that default ever
+        # changing, and so this SSRF control is visible here rather than only in httpx's docs.
+        async with httpx.AsyncClient(follow_redirects=False) as client:
             async with client.stream("GET", url) as response:
                 chunks: list[bytes] = []
                 total = 0
@@ -294,6 +319,8 @@ def _did_web_to_url(did: str) -> str:
             _fail("malformed_did_web")
         if not _is_safe_did_web_segment(decoded):
             _fail("malformed_did_web")
+        if not _is_allowed_did_web_segment_value(decoded):
+            _fail("malformed_did_web")
         segments.append(decoded)
     host = segments[0] if segments else ""
     if len(host) == 0:
@@ -362,7 +389,7 @@ def _resolve_did_key(did: str, kid: str) -> PublicKeyJwk:
 def _jwk_from_ed25519_multibase(multibase: str) -> PublicKeyJwk:
     if not multibase.startswith("z"):
         _fail("unsupported_multibase_encoding")
-    decoded = _base58_decode(multibase[1:])
+    decoded = _base58_decode(multibase[1:], MAX_DID_KEY_BASE58_LEN)
     # Multicodec varint for Ed25519 public key: 0xed 0x01.
     if len(decoded) != 34 or decoded[0] != 0xED or decoded[1] != 0x01:
         _fail("unsupported_key_type")
@@ -374,13 +401,20 @@ def _jwk_from_ed25519_base58(encoded: str) -> PublicKeyJwk:
     """`publicKeyBase58` (the `Ed25519VerificationKey2018` legacy encoding, no multicodec
     prefix, no `z` multibase marker - plain base58btc over the raw 32-byte Ed25519 key).
     """
-    decoded = _base58_decode(encoded)
+    decoded = _base58_decode(encoded, MAX_DID_KEY_BASE58_LEN)
     if len(decoded) != 32:
         _fail("unsupported_key_type")
     return {"kty": "OKP", "crv": "Ed25519", "x": _base64url_encode(decoded)}
 
 
-def _base58_decode(encoded: str) -> bytes:
+def _base58_decode(encoded: str, max_len: int) -> bytes:
+    # Review finding #3: this decode is a big-int multiply-accumulate, quadratic in input length.
+    # `kid` (and therefore the did:key multibase value decoded here) is attacker-controlled -
+    # `kid == did#multibase` is trivially satisfied - and the SAME decoder also handles
+    # publicKeyMultibase/publicKeyBase58 from a fetched did:web/did:cheqd document. Bounding the
+    # input BEFORE the loop, not after, is what keeps an oversized value cheap to reject.
+    if len(encoded) > max_len:
+        _fail("base58_too_long")
     if len(encoded) == 0:
         return b""
     num = 0

@@ -119,7 +119,8 @@ export function createRetrievePublicKey(
 			return resolveDidWeb(
 				did,
 				kid,
-				options.fetchDidWebDocument ?? defaultFetchDidWeb(options.didWebMaxResponseBytes ?? DEFAULT_DID_WEB_MAX_RESPONSE_BYTES),
+				options.fetchDidWebDocument ??
+					defaultFetchDidWeb(options.didWebMaxResponseBytes ?? DEFAULT_DID_WEB_MAX_RESPONSE_BYTES),
 				options.didWebFetchTimeoutMs ?? DEFAULT_DID_WEB_FETCH_TIMEOUT_MS,
 			);
 		}
@@ -133,9 +134,18 @@ export function createRetrievePublicKey(
 	};
 }
 
-function defaultFetchDidWeb(maxResponseBytes: number): (url: string) => Promise<{ status: number; json(): Promise<unknown> }> {
+function defaultFetchDidWeb(
+	maxResponseBytes: number,
+): (url: string) => Promise<{ status: number; json(): Promise<unknown> }> {
 	return async function fetchDidWeb(url: string) {
-		const response = await fetch(url);
+		// `redirect: 'error'` - NOT the default ('follow') - makes `fetch` itself fail a request
+		// whose response is a redirect, instead of transparently chasing it. A did:web host that
+		// returns a 3xx could otherwise redirect this request to an arbitrary other host
+		// (including plain http://, which `fetch` does not block as an https-to-http downgrade),
+		// bypassing the #42 SSRF hardening - the segment-charset check and the https-only URL
+		// built by `didWebToUrl` only constrain where the FIRST request goes, not where a
+		// redirect response sends it next.
+		const response = await fetch(url, { redirect: 'error' });
 		return {
 			status: response.status,
 			async json(): Promise<unknown> {
@@ -175,7 +185,9 @@ async function readBoundedText(response: Response, maxBytes: number): Promise<st
  * (e.g. `@cheqd/agent-identity-ap2`'s generic DataIntegrityProof verifier) - avoids re-deriving
  * the same publicKeyJwk/Multibase/Base58 dispatch logic a second time. */
 export function keyFromDocument(document: MinimalDidDocument, kid: string): PublicKeyJwk {
-	const method = (document.verificationMethod ?? []).find((candidate) => methodId(candidate, document.id) === kid);
+	const method = (document.verificationMethod ?? []).find(
+		(candidate) => methodId(candidate, document.id) === kid,
+	);
 	if (!method) fail('kid_not_in_document');
 	if (method.publicKeyJwk) {
 		const jwk = method.publicKeyJwk;
@@ -206,12 +218,17 @@ function methodId(method: MinimalVerificationMethod, did: string): string {
 export function assertionMethodKeyFromDocument(document: MinimalDidDocument, kid: string): PublicKeyJwk {
 	const relationship = document.assertionMethod ?? [];
 	const matched = relationship.find((entry) =>
-		typeof entry === 'string' ? (entry.startsWith('#') ? `${document.id}${entry}` : entry) === kid : methodId(entry, document.id) === kid,
+		typeof entry === 'string'
+			? (entry.startsWith('#') ? `${document.id}${entry}` : entry) === kid
+			: methodId(entry, document.id) === kid,
 	);
 	if (!matched) fail('kid_not_in_assertion_method');
 	// A string entry names a method the document must also publish under verificationMethod; an
 	// embedded entry carries its own fields directly and needs no further lookup.
-	const method = typeof matched === 'string' ? (document.verificationMethod ?? []).find((candidate) => methodId(candidate, document.id) === kid) : matched;
+	const method =
+		typeof matched === 'string'
+			? (document.verificationMethod ?? []).find((candidate) => methodId(candidate, document.id) === kid)
+			: matched;
 	if (!method) fail('kid_not_in_document');
 	if (!method.type || !method.controller) fail('malformed_verification_method');
 	if (method.controller !== document.id) fail('controller_mismatch');
@@ -289,6 +306,7 @@ function didWebToUrl(did: string): string {
 			fail('malformed_did_web');
 		}
 		if (!isSafeDidWebSegment(decoded)) fail('malformed_did_web');
+		if (!isAllowedDidWebSegmentValue(decoded)) fail('malformed_did_web');
 		return decoded;
 	});
 	const host = segments[0];
@@ -316,6 +334,18 @@ function isSafeDidWebSegment(segment: string): boolean {
 	return !/[@/\\#?]/.test(segment);
 }
 
+/** Rejects a decoded segment that is empty, `.`, or `..` (review finding #8, the did:web part).
+ * `isSafeDidWebSegment` only forbids characters a URL parser would reinterpret as new URL
+ * structure - it does not forbid a segment that a URL/path NORMALIZER later collapses or
+ * discards. A `..` segment survives that charset check (every character in it is plain ASCII)
+ * yet `did:web:host:users:bob:..:alice` builds `https://host/users/bob/../alice/did.json`, which
+ * normalizes to `https://host/users/alice/did.json` - fetching alice's path while the DID string
+ * superficially named bob's. An empty segment (two adjacent `:`s, or `%3A%3A`) is rejected for
+ * the same reason: it is not meaningful path/host data either. */
+function isAllowedDidWebSegmentValue(segment: string): boolean {
+	return segment.length > 0 && segment !== '.' && segment !== '..';
+}
+
 function isMinimalDidDocument(value: unknown): value is MinimalDidDocument {
 	return (
 		typeof value === 'object' &&
@@ -338,7 +368,7 @@ function resolveDidKey(did: string, kid: string): PublicKeyJwk {
 
 function jwkFromEd25519Multibase(multibase: string): PublicKeyJwk {
 	if (!multibase.startsWith('z')) fail('unsupported_multibase_encoding');
-	const bytes = base58Decode(multibase.slice(1));
+	const bytes = base58Decode(multibase.slice(1), MAX_DID_KEY_BASE58_LEN);
 	// Multicodec varint for Ed25519 public key: 0xed 0x01 (two bytes, this prefix needs no
 	// multi-byte varint continuation since 0xed01 < 0x4000).
 	if (bytes.length !== 34 || bytes[0] !== 0xed || bytes[1] !== 0x01) fail('unsupported_key_type');
@@ -351,7 +381,7 @@ function jwkFromEd25519Multibase(multibase: string): PublicKeyJwk {
  * published by real DIDs on the public cheqd testnet resolver as of November 2026, alongside the
  * newer `publicKeyMultibase`/`publicKeyJwk` forms. */
 function jwkFromEd25519Base58(encoded: string): PublicKeyJwk {
-	const bytes = base58Decode(encoded);
+	const bytes = base58Decode(encoded, MAX_DID_KEY_BASE58_LEN);
 	if (bytes.length !== 32) fail('unsupported_key_type');
 	const x = base64UrlEncode(bytes);
 	return { kty: 'OKP', crv: 'Ed25519', x };
@@ -360,7 +390,19 @@ function jwkFromEd25519Base58(encoded: string): PublicKeyJwk {
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const BASE58_ALPHABET_MAP = new Map(Array.from(BASE58_ALPHABET).map((char, i) => [char, i]));
 
-function base58Decode(encoded: string): Uint8Array {
+/** The longest a base58btc string legitimately needed here can be: 34 bytes (the Ed25519
+ * multicodec-prefixed `publicKeyMultibase` form) base58-encodes to at most
+ * ceil(34 * 8 / log2(58)) = 47 characters; the 32-byte raw `publicKeyBase58` form needs fewer.
+ * 50 leaves a small margin, same rationale as `eddsa-jcs-2022.ts`'s `MAX_PROOF_VALUE_BASE58_LEN`. */
+const MAX_DID_KEY_BASE58_LEN = 50;
+
+function base58Decode(encoded: string, maxLen: number): Uint8Array {
+	// Review finding #3: this decode is a BigInt multiply-accumulate, quadratic in input length.
+	// `kid` (and therefore the did:key multibase value decoded here) is attacker-controlled -
+	// `kid === did#multibase` is trivially satisfied - and the SAME decoder also handles
+	// `publicKeyMultibase`/`publicKeyBase58` from a fetched did:web/did:cheqd document. Bounding
+	// the input BEFORE the loop, not after, is what keeps an oversized value cheap to reject.
+	if (encoded.length > maxLen) fail('base58_too_long');
 	if (encoded.length === 0) return new Uint8Array(0);
 	let num = 0n;
 	for (const char of encoded) {
