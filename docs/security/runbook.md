@@ -89,7 +89,7 @@ indicate a MISCONFIGURATION on your own side, not an attack:
 ## Where to look when something doesn't verify that you expected to
 
 1. Re-run the exact request through `conformance/run-a2a-gate-vectors.mjs`'s pattern (sign over
-   the real wire body, never the SDK's typed object - see `v1/spec.md` §4.6.1 for why those two
+   the real wire body, never the SDK's typed object - see `v1/spec.md` §4.4 for why those two
    differ) to confirm whether your own client is producing a wire-faithful covered form.
 2. Check whether the transport is one this programme has verified end to end
    (`packages/a2a/smoke-test*.mjs`) - a NEW transport binding needs the same covered-form

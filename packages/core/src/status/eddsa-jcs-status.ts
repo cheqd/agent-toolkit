@@ -37,7 +37,7 @@ export interface CheqdStatusCheckerOptions {
 /**
  * Build a {@link BitstringRevocationChecker} that fails closed unless the fetched status list's
  * `eddsa-jcs-2022` proof verifies against the pinned issuer's resolved `did:cheqd` key - per
- * spec §5.6 option 1, the proof-based alternative to ledger-anchoring-only trust.
+ * spec §5.6 option 2, the proof-based alternative to ledger-anchoring-only trust.
  *
  * `@kya-os/mcp` 1.23.0+: because `verifyStatusList` is always set here, the returned checker
  * MUST be called with a second argument naming the checked credential's issuer -
