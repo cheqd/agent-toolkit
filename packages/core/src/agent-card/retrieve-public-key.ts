@@ -16,6 +16,30 @@
  * method, a malformed DID, `kid` not matching `expectedDid` (when given), a `kid` the resolved
  * document does not publish, transport failure, invalid JSON, or a malformed DID document.
  *
+ * `did:web` resolution has two further hardening measures, both found by review:
+ *
+ * 1. Segment charset validation. `didWebToUrl` percent-decodes each `:`-delimited segment of
+ *    the DID (per the DID Web Method) and then concatenates the decoded value straight into a
+ *    `https://${host}/...` template string. Decoding BEFORE validating, with no re-validation of
+ *    what came out, lets a decoded segment contain characters that are structurally meaningful
+ *    to a URL parser - `@`, `/`, `#`, backslash, control characters - changing what the
+ *    resulting string actually means once a real URL parser (the one `fetch` itself uses) reads
+ *    it. E.g. `did:web:good.example.com%40internal-host` decodes to the single segment
+ *    `good.example.com@internal-host`; built naively into `https://good.example.com@internal-
+ *    host/.well-known/did.json`, a URL parser reads `good.example.com` as discarded userinfo and
+ *    `internal-host` as the REAL host contacted - an SSRF primitive that lets a `did:web` value
+ *    which superficially names one host actually direct the fetch at a completely different
+ *    one (an internal service, a metadata endpoint). `%23` (a literal `#`) is a milder version
+ *    of the same root cause: it silently truncates the path the server actually receives, since
+ *    `fetch` treats everything after `#` as a client-side-only fragment. Every decoded segment
+ *    is now validated against a safe charset BEFORE being used to build the URL, rejecting
+ *    anything that could be reinterpreted as new URL structure rather than plain host/path data.
+ * 2. A fetch timeout and a response-size cap (enforced for the default fetch implementation;
+ *    an injected `fetchDidWebDocument` is responsible for its own body-size bound, but the
+ *    timeout wraps ANY implementation, default or injected) - a compromised or malicious
+ *    `did:web` server could otherwise hang the request indefinitely or stream an unbounded
+ *    response body to exhaust memory.
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -58,7 +82,18 @@ export interface RetrievePublicKeyOptions {
 	/** Opt-in `did:cheqd` resolution. Omit to reject every `did:cheqd` `kid` (fail-closed default -
 	 * this module does not assume a trusted cheqd resolver endpoint on the caller's behalf). */
 	resolveDidCheqd?: (did: string) => Promise<MinimalDidDocument | null>;
+	/** Milliseconds to wait for a `did:web` fetch (default or injected) before giving up.
+	 * Default 5000. */
+	didWebFetchTimeoutMs?: number;
+	/** Maximum `did:web` response body size in bytes, enforced only by the DEFAULT fetch
+	 * implementation - an injected `fetchDidWebDocument` is responsible for its own bound.
+	 * Default 1_000_000 (1 MB): generous for a DID document, small enough to bound memory
+	 * against a compromised or malicious server streaming an unbounded body. */
+	didWebMaxResponseBytes?: number;
 }
+
+const DEFAULT_DID_WEB_FETCH_TIMEOUT_MS = 5000;
+const DEFAULT_DID_WEB_MAX_RESPONSE_BYTES = 1_000_000;
 
 class KeyResolutionError extends Error {}
 
@@ -80,7 +115,14 @@ export function createRetrievePublicKey(
 		if (options.expectedDid !== undefined && did !== options.expectedDid) fail('kid_wrong_did');
 
 		if (did.startsWith('did:key:')) return resolveDidKey(did, kid);
-		if (did.startsWith('did:web:')) return resolveDidWeb(did, kid, options.fetchDidWebDocument ?? defaultFetchDidWeb);
+		if (did.startsWith('did:web:')) {
+			return resolveDidWeb(
+				did,
+				kid,
+				options.fetchDidWebDocument ?? defaultFetchDidWeb(options.didWebMaxResponseBytes ?? DEFAULT_DID_WEB_MAX_RESPONSE_BYTES),
+				options.didWebFetchTimeoutMs ?? DEFAULT_DID_WEB_FETCH_TIMEOUT_MS,
+			);
+		}
 		if (did.startsWith('did:cheqd:')) {
 			if (!options.resolveDidCheqd) fail('did_cheqd_resolution_not_configured');
 			const document = await options.resolveDidCheqd(did);
@@ -91,8 +133,42 @@ export function createRetrievePublicKey(
 	};
 }
 
-async function defaultFetchDidWeb(url: string) {
-	return fetch(url);
+function defaultFetchDidWeb(maxResponseBytes: number): (url: string) => Promise<{ status: number; json(): Promise<unknown> }> {
+	return async function fetchDidWeb(url: string) {
+		const response = await fetch(url);
+		return {
+			status: response.status,
+			async json(): Promise<unknown> {
+				const text = await readBoundedText(response, maxResponseBytes);
+				return JSON.parse(text);
+			},
+		};
+	};
+}
+
+/** Reads `response`'s body as text, aborting (and releasing the underlying connection) as soon
+ * as more than `maxBytes` has been read - never buffering an unbounded body in memory first and
+ * checking its size only afterwards. */
+async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+	if (response.body === null) return response.text();
+	const reader = response.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			total += value.byteLength;
+			if (total > maxBytes) {
+				await reader.cancel();
+				fail('did_web_response_too_large');
+			}
+			chunks.push(value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString('utf8');
 }
 
 /** Exported for reuse by other modules that already hold a resolved DID document and a `kid`
@@ -153,36 +229,67 @@ async function resolveDidWeb(
 	did: string,
 	kid: string,
 	fetchDidWebDocument: (url: string) => Promise<{ status: number; json(): Promise<unknown> }>,
+	fetchTimeoutMs: number,
 ): Promise<PublicKeyJwk> {
 	const url = didWebToUrl(did);
 	let response: { status: number; json(): Promise<unknown> };
 	try {
-		response = await fetchDidWebDocument(url);
-	} catch {
+		response = await withTimeout(fetchDidWebDocument(url), fetchTimeoutMs, 'did_web_fetch_timeout');
+	} catch (error) {
+		if (error instanceof KeyResolutionError) throw error;
 		fail('did_web_fetch_failed');
 	}
 	if (response.status !== 200) fail('did_web_fetch_failed');
 	let document: unknown;
 	try {
 		document = await response.json();
-	} catch {
+	} catch (error) {
+		if (error instanceof KeyResolutionError) throw error; // e.g. did_web_response_too_large
 		fail('did_web_invalid_json');
 	}
 	if (!isMinimalDidDocument(document) || document.id !== did) fail('did_web_document_mismatch');
 	return keyFromDocument(document, kid);
 }
 
+/** Rejects with `reason` once `timeoutMs` elapses, whichever comes first - applies uniformly to
+ * ANY `fetchDidWebDocument` implementation, default or injected, closing the "a compromised
+ * server just never responds" window regardless of how the fetch itself is performed. Does not
+ * cancel `promise` - for the default implementation that's fine (the fetch's own eventual
+ * settlement is simply ignored), since the goal is bounding how long THIS call waits, not
+ * guaranteeing the underlying connection closes instantly. */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, reason: string): Promise<T> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => reject(new KeyResolutionError(reason)), timeoutMs);
+		promise.then(
+			(value) => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			(error) => {
+				clearTimeout(timer);
+				reject(error);
+			},
+		);
+	});
+}
+
 /** `did:web:example.com` -> `https://example.com/.well-known/did.json`;
- * `did:web:example.com:a:b` -> `https://example.com/a/b/did.json` (DID Web Method, §Read). */
+ * `did:web:example.com:a:b` -> `https://example.com/a/b/did.json` (DID Web Method, §Read).
+ * Each decoded segment is validated against a safe charset - see the class doc comment for why
+ * skipping this (building the URL directly from whatever a percent-decode produces) is an SSRF
+ * primitive, not merely a cosmetic concern. */
 function didWebToUrl(did: string): string {
 	const rest = did.slice('did:web:'.length);
 	if (rest.length === 0) fail('malformed_did_web');
 	const segments = rest.split(':').map((segment) => {
+		let decoded: string;
 		try {
-			return decodeURIComponent(segment);
+			decoded = decodeURIComponent(segment);
 		} catch {
 			fail('malformed_did_web');
 		}
+		if (!isSafeDidWebSegment(decoded)) fail('malformed_did_web');
+		return decoded;
 	});
 	const host = segments[0];
 	if (host === undefined || host.length === 0) fail('malformed_did_web');
@@ -190,6 +297,23 @@ function didWebToUrl(did: string): string {
 	return path.length === 0
 		? `https://${host}/.well-known/did.json`
 		: `https://${host}/${path.join('/')}/did.json`;
+}
+
+/** Forbids every character that is structurally meaningful to a URL parser - `@` (authority/
+ * userinfo separator - the SSRF-enabling case), `/` and `\` (path/authority separators), `#`
+ * (fragment separator - silently truncates what the server actually receives), `?` (query
+ * separator), and any ASCII control character or space. A decoded segment containing any of
+ * these could be reinterpreted as new URL structure rather than plain host/path data once it
+ * reaches `https://${host}/...`'s own URL parser - exactly the class of bug this guards against.
+ * Deliberately permissive otherwise (Unicode letters in an IDN host, say, are left to whatever
+ * the actual HTTP client does with them) - this is not a hostname-syntax validator, only a
+ * guard against URL-structuring characters slipping through a decode. */
+function isSafeDidWebSegment(segment: string): boolean {
+	for (const char of segment) {
+		const code = char.codePointAt(0) ?? 0;
+		if (code <= 0x20 || code === 0x7f) return false;
+	}
+	return !/[@/\\#?]/.test(segment);
 }
 
 function isMinimalDidDocument(value: unknown): value is MinimalDidDocument {
