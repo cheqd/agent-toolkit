@@ -19,7 +19,8 @@
   "dependencies": {
     "@cheqd/agent-identity": "0.0.0",
     "@sd-jwt/core": "^0.24.3",
-    "jose": "^6.2.15"
+    "jose": "^6.2.15",
+    "json-canonicalize": "^3.0.1"
   },
   "publishConfig": {
     "access": "public"

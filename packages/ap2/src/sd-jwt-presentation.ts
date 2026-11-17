@@ -14,6 +14,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import { createHash, createPublicKey, verify as cryptoVerify } from 'node:crypto';
+import { canonicalize } from 'json-canonicalize';
 import { SDJwtInstance } from '@sd-jwt/core';
 import type { Hasher, KbVerifier, Verifier } from '@sd-jwt/core';
 import type { OpenCheckoutMandate, OpenPaymentMandate } from './types.js';
@@ -120,9 +121,18 @@ export function verifyOpenCheckoutMandatePresentation(options: VerifyOpenMandate
 	return verifyOpenMandate<OpenCheckoutMandate>(options);
 }
 
-/** Secure hash of closed-mandate content for `transaction_data` binding: base64url(SHA-256(JSON)). */
+/**
+ * Secure hash of closed-mandate content for `transaction_data` binding:
+ * base64url(SHA-256(JCS(content))). MUST use RFC 8785 (JCS) canonicalisation, not
+ * `JSON.stringify`/`json.dumps`'s own (differing) default formatting - found by this package's
+ * cross-language conformance script (`conformance/cross-language-ap2-sd-jwt.mjs`): a hash a Python
+ * holder computed with `json.dumps`'s whitespace never matched one a TS holder computed with
+ * `JSON.stringify`'s, for the identical content, so `verifyTransactionDataBinding` rejected every
+ * cross-language presentation. The Python package's `transaction_data_hash` MUST use the same
+ * RFC 8785 library (`rfc8785`) for the two to agree.
+ */
 export function transactionDataHash(closedMandateContent: unknown): string {
-	return createHash('sha256').update(JSON.stringify(closedMandateContent), 'utf8').digest('base64url');
+	return createHash('sha256').update(canonicalize(closedMandateContent)).digest('base64url');
 }
 
 /** Checks that `transactionDataHash(content)` is one of the KB-JWT's declared `transaction_data`

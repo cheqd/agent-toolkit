@@ -32,6 +32,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Generic, Optional, TypeVar
 
+import rfc8785
 from jwcrypto.jwk import JWK
 from sd_jwt.verifier import SDJWTVerifier
 
@@ -199,9 +200,18 @@ async def verify_open_checkout_mandate_presentation(
 
 def transaction_data_hash(closed_mandate_content: Any) -> str:
     """Secure hash of closed-mandate content for `transaction_data` binding:
-    base64url(SHA-256(JSON)).
+    base64url(SHA-256(JCS(content))).
+
+    MUST use RFC 8785 (JCS) canonicalisation, not `json.dumps`'s own (differing) default
+    formatting - found by this package's cross-language conformance script
+    (`conformance/cross-language-ap2-sd-jwt.mjs`): a hash this function computed with
+    `json.dumps`'s whitespace never matched one the TypeScript package's `transactionDataHash`
+    computed with `JSON.stringify`'s, for the identical content, so
+    `verify_transaction_data_binding` rejected every cross-language presentation. The TypeScript
+    package's `transactionDataHash` MUST use the same RFC 8785 library (`json-canonicalize`) for
+    the two to agree.
     """
-    encoded = json.dumps(closed_mandate_content).encode("utf-8")
+    encoded = rfc8785.dumps(closed_mandate_content)
     digest = hashlib.sha256(encoded).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
