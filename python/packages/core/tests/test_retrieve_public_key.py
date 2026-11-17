@@ -4,6 +4,7 @@
 # trusted blindly). did:web uses an injected fetch, so no network call is made.
 import asyncio
 import base64
+import time
 
 import httpx
 import pytest
@@ -322,6 +323,74 @@ async def test_a_did_web_segment_that_decodes_to_a_slash_is_rejected():
     assert called["value"] is False, "must be rejected before any fetch is attempted"
 
 
+# Regression (part of review finding #8 that belongs to this file: the did:web variant).
+# _did_web_to_url did not reject '.' / '..' / empty segments, so a did:web value with a '..'
+# segment is built into a URL a real URL parser (or an upstream server) normalizes away, letting
+# `did:web:host:users:bob:..:alice` actually address alice's path while superficially naming
+# bob's - a path-traversal/identity-confusion primitive on top of the #42 character denylist.
+async def test_a_did_web_path_containing_a_dotdot_segment_is_rejected():
+    did = "did:web:example.com:users:bob:..:alice"
+    called = {"value": False}
+
+    async def fetch_did_web_document(_url):
+        called["value"] = True
+
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {"id": did, "verificationMethod": []}
+
+        return Response()
+
+    retrieve = create_retrieve_public_key(fetch_did_web_document=fetch_did_web_document)
+    with pytest.raises(KeyResolutionError):
+        await retrieve(f"{did}#key-1", None)
+    assert called["value"] is False, "must be rejected before any fetch is attempted"
+
+
+async def test_a_did_web_path_containing_a_lone_dot_segment_is_rejected():
+    did = "did:web:example.com:users:.:alice"
+    called = {"value": False}
+
+    async def fetch_did_web_document(_url):
+        called["value"] = True
+
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {"id": did, "verificationMethod": []}
+
+        return Response()
+
+    retrieve = create_retrieve_public_key(fetch_did_web_document=fetch_did_web_document)
+    with pytest.raises(KeyResolutionError):
+        await retrieve(f"{did}#key-1", None)
+    assert called["value"] is False, "must be rejected before any fetch is attempted"
+
+
+async def test_a_did_web_path_containing_an_empty_segment_is_rejected():
+    did = "did:web:example.com:users::alice"
+    called = {"value": False}
+
+    async def fetch_did_web_document(_url):
+        called["value"] = True
+
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {"id": did, "verificationMethod": []}
+
+        return Response()
+
+    retrieve = create_retrieve_public_key(fetch_did_web_document=fetch_did_web_document)
+    with pytest.raises(KeyResolutionError):
+        await retrieve(f"{did}#key-1", None)
+    assert called["value"] is False, "must be rejected before any fetch is attempted"
+
+
 async def test_a_did_web_fetch_that_never_resolves_is_rejected_once_the_timeout_elapses():
     did = "did:web:example.com"
 
@@ -333,6 +402,98 @@ async def test_a_did_web_fetch_that_never_resolves_is_rejected_once_the_timeout_
     )
     with pytest.raises(KeyResolutionError):
         await retrieve(f"{did}#key-1", None)
+
+
+# Regression (review finding #3): _base58_decode did the big-int multiply-accumulate over the
+# WHOLE input before any length check, and the kid is attacker-controlled (kid == did#multibase
+# is trivially satisfied for did:key). Decode cost is quadratic in input length, so an oversized
+# multibase value ties up the event loop. Asserts both the exact failure mode (eventually raises)
+# and the exact symptom the review measured (wall-clock time), not merely that it raises - a
+# slow-but-eventually-correct rejection would still be the vulnerability.
+async def test_a_did_key_with_a_huge_base58_multibase_payload_is_rejected_quickly():
+    # '1' is base58's lowest digit, but 'z' is the highest-value digit (57) - repeating it forces
+    # the accumulator to grow on every character, the worst case for the quadratic decode cost.
+    huge_encoded = "z" * 50_000
+    multibase = f"z{huge_encoded}"
+    did = f"did:key:{multibase}"
+    retrieve = create_retrieve_public_key()
+    started = time.monotonic()
+    with pytest.raises(KeyResolutionError):
+        await retrieve(f"{did}#{multibase}", None)
+    elapsed_seconds = time.monotonic() - started
+    assert elapsed_seconds < 0.2, f"expected rejection well under 200ms, took {elapsed_seconds * 1000:.1f}ms"
+
+
+# Regression (review finding #5, Python side): the review states httpx.AsyncClient() already
+# defaults to follow_redirects=False, so a 3xx fails the `status_code != 200` check rather than
+# being silently followed - unlike the TS default fetch(). This test exercises the DEFAULT fetch
+# implementation (no injected fetch_did_web_document) against two real local HTTP servers to
+# verify that claim directly, rather than trusting the review's prose.
+async def test_the_default_did_web_fetch_does_not_follow_a_redirect_to_a_different_host():
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from threading import Thread
+
+    class _Server:
+        def __init__(self, handler_factory):
+            self.hit = False
+            self._httpd = HTTPServer(("127.0.0.1", 0), handler_factory(self))
+            self._thread = Thread(target=self._httpd.serve_forever, daemon=True)
+            self._thread.start()
+
+        @property
+        def port(self) -> int:
+            return self._httpd.server_address[1]
+
+        def close(self):
+            self._httpd.shutdown()
+            self._httpd.server_close()
+
+    def attacker_handler_factory(server):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                server.hit = True
+                body = b'{"id": "did:web:attacker-controlled", "verificationMethod": []}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        return Handler
+
+    attacker = _Server(attacker_handler_factory)
+
+    def origin_handler_factory(_server):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{attacker.port}/evil.json")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        return Handler
+
+    origin = _Server(origin_handler_factory)
+
+    try:
+        # _did_web_to_url always builds an https:// URL (the #42 hardening); this did is resolved
+        # directly against the plain-HTTP local server by monkeypatching nothing - instead we call
+        # the module's own default-fetch-producing factory against an http:// URL directly, which
+        # exercises the exact same httpx.AsyncClient() construction `_default_fetch_did_web` uses.
+        from cheqd_agent_identity.agent_card.retrieve_public_key import _default_fetch_did_web
+
+        fetch = _default_fetch_did_web(1_000_000)
+        response = await fetch(f"http://127.0.0.1:{origin.port}/.well-known/did.json")
+        assert response.status_code == 302, "a redirect response must be surfaced, not followed"
+        assert attacker.hit is False, "the redirect must not be followed to a different host/port"
+    finally:
+        origin.close()
+        attacker.close()
 
 
 async def test_a_did_web_response_body_over_the_configured_byte_cap_is_rejected(monkeypatch):
