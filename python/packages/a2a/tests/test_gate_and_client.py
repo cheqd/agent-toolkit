@@ -3,13 +3,18 @@
 # (server), both built in this package - proves the two halves work together. Does NOT prove
 # interop with the real a2a-sdk's protobuf types or a TypeScript peer - see
 # docs/design-decisions.md D15 for that boundary.
+import asyncio
 import base64
 
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from cheqd_agent_identity_a2a.client import ProofInterceptor, ProofInterceptorOptions
+from cheqd_agent_identity_a2a.client import (
+    ProofInterceptor,
+    ProofInterceptorOptions,
+    ResponseProofVerificationError,
+)
 from cheqd_agent_identity_a2a.gate import (
     AgentIdentityGate,
     GateEnforcementError,
@@ -99,28 +104,108 @@ async def test_a_full_round_trip_verifies_on_both_ends():
     interceptor = world.interceptor()
     gate = world.gate()
 
-    params, headers = await interceptor.before("SendMessage", {"message": {"content": "hello"}})
-    assert headers == {"A2A-Extensions": EXTENSION_URI}
+    call = await interceptor.before("SendMessage", {"message": {"content": "hello"}})
+    assert call.headers == {"A2A-Extensions": EXTENSION_URI}
 
-    result = await gate.handle_send_message("SendMessage", params, completed_task_handler)
+    result = await gate.handle_send_message("SendMessage", call.params, completed_task_handler)
     assert "org.kya-os/response-proof" in result["metadata"]
 
-    await interceptor.after("SendMessage", result)
+    await interceptor.after("SendMessage", result, call)
     assert interceptor.state.last_response_check.valid is True
 
 
 async def test_a_response_tampered_with_after_signing_is_caught_by_the_client():
+    """Locks in the FIX for the review finding that this test used to lock in the opposite
+    (fail-open) behaviour for: `after()` must now raise on a failed verification, not just
+    record `valid is False` on `state` and return normally.
+    """
     world = World()
     interceptor = world.interceptor()
     gate = world.gate()
 
-    params, _ = await interceptor.before("SendMessage", {"message": {"content": "hello"}})
-    result = await gate.handle_send_message("SendMessage", params, completed_task_handler)
+    call = await interceptor.before("SendMessage", {"message": {"content": "hello"}})
+    result = await gate.handle_send_message("SendMessage", call.params, completed_task_handler)
 
     tampered = {**result, "status": "failed"}
-    await interceptor.after("SendMessage", tampered)
+    with pytest.raises(ResponseProofVerificationError) as exc_info:
+        await interceptor.after("SendMessage", tampered, call)
+    assert exc_info.value.code == "proof_invalid"
+    assert "Response hash mismatch" in exc_info.value.reason
     assert interceptor.state.last_response_check.valid is False
     assert "Response hash mismatch" in interceptor.state.last_response_check.reason
+
+
+async def test_after_raises_when_there_is_no_covered_request_to_verify_against():
+    """The third fail-open case the review flagged: `_last_covered is None` (no matching
+    `before()` call) used to make `after()` return silently. It must now raise instead.
+    """
+    world = World()
+    interceptor = world.interceptor()
+
+    with pytest.raises(ResponseProofVerificationError) as exc_info:
+        await interceptor.after("SendMessage", {"id": "task-1", "status": "completed", "metadata": {}})
+    assert exc_info.value.code == "no_covered_request"
+
+
+async def test_after_raises_when_the_response_carries_no_proof_at_all():
+    world = World()
+    interceptor = world.interceptor()
+
+    call = await interceptor.before("SendMessage", {"message": {"content": "hello"}})
+    with pytest.raises(ResponseProofVerificationError) as exc_info:
+        await interceptor.after("SendMessage", {"id": "task-1", "status": "completed"}, call)
+    assert exc_info.value.code == "no_response_proof"
+    assert interceptor.state.last_response_check.valid is False
+
+
+async def test_after_rejects_a_response_verified_against_a_different_calls_covered_request():
+    """Proves the per-call `covered_request` `before()` returns is actually load-bearing: if a
+    caller ever threads in the WRONG call's context - exactly what the old shared-instance
+    `_last_covered` bug effectively did under concurrency (see the next test for the real
+    concurrent-call regression) - the content-binding check must still catch it.
+    """
+    world = World()
+    interceptor = world.interceptor()
+    gate = world.gate()
+
+    call_a = await interceptor.before("SendMessage", {"message": {"content": "message-A"}})
+    call_b = await interceptor.before("SendMessage", {"message": {"content": "message-B"}})
+    result_a = await gate.handle_send_message("SendMessage", call_a.params, completed_task_handler)
+
+    with pytest.raises(ResponseProofVerificationError) as exc_info:
+        # Call A's response, verified against call B's covered request.
+        await interceptor.after("SendMessage", result_a, call_b)
+    assert exc_info.value.code == "proof_invalid"
+    assert "Request hash mismatch" in exc_info.value.reason
+
+
+async def test_concurrent_send_message_calls_through_one_interceptor_do_not_cross_contaminate():
+    """Regression test for the review's shared-instance-state finding (`_last_covered` used to
+    live on `self`, not scoped per call - exactly the bug PR #39
+    (https://github.com/cheqd/agent-toolkit/pull/39) fixed in the TypeScript client). Two
+    `SendMessage` calls genuinely in flight at once (via `asyncio.gather`) through the SAME
+    `ProofInterceptor` instance: each must verify its own response against its own covered
+    request, not get cross-contaminated by the other's `before()`/`after()` interleaving.
+    """
+    world = World()
+    interceptor = world.interceptor()
+    gate = world.gate()
+
+    async def round_trip(message_text: str):
+        call = await interceptor.before("SendMessage", {"message": {"content": message_text}})
+
+        async def handler():
+            return {"id": f"task-{message_text}", "status": "completed", "metadata": {}}
+
+        result = await gate.handle_send_message("SendMessage", call.params, handler)
+        await interceptor.after("SendMessage", result, call)
+        check = interceptor.state.last_response_check
+        assert check is not None
+        return check
+
+    check_a, check_b = await asyncio.gather(round_trip("message-A"), round_trip("message-B"))
+    assert check_a.valid is True
+    assert check_b.valid is True
 
 
 async def test_a_call_with_no_proof_at_all_is_rejected_before_the_handler_runs():
