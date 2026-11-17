@@ -31,10 +31,31 @@ export interface MandateConsumptionStoreOptions {
 export interface MandateConsumptionStore {
 	/** Atomically consumes a one-time-use mandate. Returns `false` if already consumed. */
 	consumeOnce(mandateId: string): Promise<boolean>;
-	/** Records one use of amount `amountMinorUnits` against `mandateId`, returning the updated context. */
+	/**
+	 * Records one use of amount `amountMinorUnits` against `mandateId`, returning the updated
+	 * context. Composing this with an earlier `getContext()` call and an external constraint
+	 * check (read context, check it yourself, then call this) is NOT safe: two concurrent
+	 * callers can both read the same context before either records, so both can pass a budget
+	 * check that only one of them should have (found by review - two concurrent $90 payments
+	 * against a $100 budget both reading `total_amount: 0` both pass, both record, spend ends at
+	 * $180). Use {@link MandateConsumptionStore.checkAndRecordUse} for anything that needs the
+	 * check and the record to be atomic together; keep this for cases with no check to race.
+	 */
 	recordUse(mandateId: string, amountMinorUnits: number): Promise<MandateContext>;
 	/** Reads the current context without recording a use. Absent mandate -> zeroed context. */
 	getContext(mandateId: string): Promise<MandateContext>;
+	/**
+	 * Atomically checks `check(context)` against the mandate's current context and, only if it
+	 * returns no violations, records the use and returns the updated context - both under the
+	 * same per-mandate-id lock `recordUse` uses, so no other `recordUse`/`checkAndRecordUse` call
+	 * for the same mandate can run between the check and the record. This is the race-free
+	 * replacement for a `getContext()` + external check + `recordUse()` composition.
+	 */
+	checkAndRecordUse(
+		mandateId: string,
+		amountMinorUnits: number,
+		check: (context: MandateContext) => readonly string[],
+	): Promise<{ readonly ok: true; readonly context: MandateContext } | { readonly ok: false; readonly violations: readonly string[] }>;
 }
 
 function isEexist(error: unknown): boolean {
@@ -120,6 +141,27 @@ export function createMandateConsumptionStore(options: MandateConsumptionStoreOp
 		async getContext(mandateId) {
 			await ensureDirectory();
 			return readContext(mandateId);
+		},
+
+		async checkAndRecordUse(mandateId, amountMinorUnits, check) {
+			await ensureDirectory();
+			return enqueue(mandateId, async () => {
+				const current = await readContext(mandateId);
+				const violations = check(current);
+				if (violations.length > 0) return { ok: false as const, violations };
+				const updated: MandateContext = {
+					total_amount: current.total_amount + amountMinorUnits,
+					total_uses: current.total_uses + 1,
+					last_used_date: now(),
+				};
+				const handle = await open(contextPath(mandateId), 'w');
+				try {
+					await handle.writeFile(JSON.stringify(updated));
+				} finally {
+					await handle.close();
+				}
+				return { ok: true as const, context: updated };
+			});
 		},
 	};
 }

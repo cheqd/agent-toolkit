@@ -24,10 +24,26 @@ import hashlib
 import json
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional, Protocol
+from typing import Callable, Literal, Optional, Protocol, Sequence, Union
 
 from cheqd_agent_identity_ap2.types import MandateContext
+
+
+@dataclass(frozen=True)
+class CheckAndRecordUseOk:
+    ok: Literal[True]
+    context: MandateContext
+
+
+@dataclass(frozen=True)
+class CheckAndRecordUseRejected:
+    ok: Literal[False]
+    violations: Sequence[str]
+
+
+CheckAndRecordUseResult = Union[CheckAndRecordUseOk, CheckAndRecordUseRejected]
 
 
 class MandateConsumptionStore(Protocol):
@@ -38,12 +54,35 @@ class MandateConsumptionStore(Protocol):
     async def record_use(self, mandate_id: str, amount_minor_units: float) -> MandateContext:
         """Records one use of amount `amount_minor_units` against `mandate_id`, returning the
         updated context.
+
+        Composing this with an earlier `get_context()` call and an external constraint check
+        (read context, check it yourself, then call this) is NOT safe: two concurrent callers
+        can both read the same context before either records, so both can pass a budget check
+        that only one of them should have (found by review - two concurrent $90 payments
+        against a $100 budget both reading `total_amount: 0` both pass, both record, spend ends
+        at $180). Use :meth:`check_and_record_use` for anything that needs the check and the
+        record to be atomic together; keep this for cases with no check to race.
         """
         ...
 
     async def get_context(self, mandate_id: str) -> MandateContext:
         """Reads the current context without recording a use. Absent mandate -> zeroed
         context.
+        """
+        ...
+
+    async def check_and_record_use(
+        self,
+        mandate_id: str,
+        amount_minor_units: float,
+        check: Callable[[MandateContext], Sequence[str]],
+    ) -> CheckAndRecordUseResult:
+        """Atomically checks `check(context)` against the mandate's current context and, only
+        if it returns no violations, records the use and returns the updated context - both
+        under the same per-mandate-id lock `record_use` uses, so no other
+        `record_use`/`check_and_record_use` call for the same mandate can run between the check
+        and the record. This is the race-free replacement for a `get_context()` + external
+        check + `record_use()` composition.
         """
         ...
 
@@ -127,6 +166,26 @@ class _FileMandateConsumptionStore:
     async def get_context(self, mandate_id: str) -> MandateContext:
         await self._ensure_directory()
         return await self._read_context(mandate_id)
+
+    async def check_and_record_use(
+        self,
+        mandate_id: str,
+        amount_minor_units: float,
+        check: Callable[[MandateContext], Sequence[str]],
+    ) -> CheckAndRecordUseResult:
+        await self._ensure_directory()
+        async with self._lock_for(mandate_id):
+            current = await self._read_context(mandate_id)
+            violations = check(current)
+            if len(violations) > 0:
+                return CheckAndRecordUseRejected(ok=False, violations=violations)
+            updated: MandateContext = {
+                "total_amount": current["total_amount"] + amount_minor_units,
+                "total_uses": current["total_uses"] + 1,
+                "last_used_date": self._now(),
+            }
+            await asyncio.to_thread(self._context_path(mandate_id).write_text, json.dumps(updated))
+            return CheckAndRecordUseOk(ok=True, context=updated)
 
 
 def create_mandate_consumption_store(
