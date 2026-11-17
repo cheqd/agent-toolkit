@@ -31,6 +31,8 @@ import rfc8785
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
+from cheqd_agent_identity_a2a.proof.small_order import ED25519_KEY_SIZE, is_small_order_ed25519_key
+
 RESPONSE_PROOF_PROFILE_BODY = "org.kya-os/response-proof.body"
 RESPONSE_PROOF_PROFILE_ENVELOPE = "org.kya-os/response-proof.envelope"
 ResponseProofProfile = Literal["org.kya-os/response-proof.body", "org.kya-os/response-proof.envelope"]
@@ -296,6 +298,24 @@ async def verify_response_proof(
     """Verify a response proof: authenticity (the detached-style JWS over the covered claims),
     signer binding (kid/did/audience), timestamp freshness, optional content binding against
     `expected` (the request/response actually seen - detects substitution), and replay.
+
+    REPLAY CHECKING IS OPT-IN, NOT DEFAULT, UNLIKE THE REQUEST-PROOF PATH: this function only
+    checks (and consumes) `meta.nonce` when a `consume_nonce_if_fresh` seam is supplied; the
+    parameter defaults to `None`, and so does the matching client option that threads it
+    through (`client.py`'s `ClientOptions.consume_nonce_if_fresh`). A caller who never wires
+    one up gets NO replay defense for response proofs - a captured valid response proof can be
+    replayed without limit. Contrast `verify_card_proof` (`verify.py`), whose equivalent seam
+    FAILS CLOSED (`nonce_seam_missing`) when omitted, rather than silently skipping the check.
+    This default was deliberately left alone here rather than changed to match: the response
+    proof binds `requestHash` (and, when supplied, `responseHash`) to the ORIGINAL request's
+    nonce (the request proof's own nonce, checked independently by `verify_card_proof`), so a
+    replayed response proof is still a replayed response, not a forgeable one - defense in
+    depth, not the only binding. Flipping this default to fail-closed would turn every existing
+    integration that verifies response proofs without a nonce cache (there is no requirement
+    to supply one today) from "accepts, with reduced replay defense" into "rejects every
+    response", which is a bigger behavioural break than this finding's severity warrants.
+    Callers who want replay protection on response proofs MUST supply `consume_nonce_if_fresh`
+    themselves - it is not provided for them.
     """
     if not isinstance(proof, dict):
         return ResponseProofVerifyFailed(reason="Invalid proof structure")
@@ -327,6 +347,9 @@ async def verify_response_proof(
         if mismatch is not None:
             return ResponseProofVerifyFailed(reason=mismatch)
 
+    # OPT-IN replay check, by design but NOT by parity with verify_card_proof - see this
+    # function's docstring. `consume_nonce_if_fresh is None` (the default) SKIPS this entirely;
+    # it does not fail closed. Supply the seam to get replay protection on response proofs.
     if consume_nonce_if_fresh is not None:
         min_ttl_sec = _nonce_retention_seconds(DEFAULT_NONCE_TTL_SEC, meta.ts + skew_sec, now_ms)
         ok = await consume_nonce_if_fresh(meta.nonce, meta.did, min_ttl_sec)
@@ -379,7 +402,12 @@ def _verify_signature(jws: str, meta: ResponseProofMeta, public_key_jwk: dict[st
     try:
         signature = _b64url_decode(parts[2])
         public_bytes = _b64url_decode(x)
-        if len(public_bytes) != 32:
+        # Matches verify.py's `_ed25519_verify`: a small-order key (order 1, 2, 4, or 8) lets
+        # an attacker construct a signature (R = the identity encoding, S = 0) that
+        # `cryptography`'s raw Ed25519 verification accepts for EVERY message, without ever
+        # touching a private key - see proof/small_order.py's module docstring. This check is
+        # load-bearing, not redundant with the library's own verification.
+        if len(public_bytes) != ED25519_KEY_SIZE or is_small_order_ed25519_key(public_bytes):
             return False
         public_key = Ed25519PublicKey.from_public_bytes(public_bytes)
         public_key.verify(signature, signing_input)
