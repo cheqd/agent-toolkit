@@ -11,6 +11,7 @@ import {
 	sha256Hasher,
 	jwkVerifier,
 	verifyOpenPaymentMandatePresentation,
+	verifyOpenCheckoutMandatePresentation,
 	verifyTransactionDataBinding,
 	transactionDataHash,
 } from '../dist/index.js';
@@ -36,7 +37,8 @@ const CLOSED_PAYMENT = {
 async function buildPresentation({ issuer, holder, aud, nonce }) {
 	const issuerInstance = new SDJwtInstance({
 		hasher: sha256Hasher,
-		saltGenerator: (length) => Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('base64url'),
+		saltGenerator: (length) =>
+			Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('base64url'),
 		signer: signer(issuer.privateKey),
 		signAlg: 'EdDSA',
 	});
@@ -49,12 +51,20 @@ async function buildPresentation({ issuer, holder, aud, nonce }) {
 
 	const presenterInstance = new SDJwtInstance({
 		hasher: sha256Hasher,
-		saltGenerator: (length) => Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('base64url'),
+		saltGenerator: (length) =>
+			Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('base64url'),
 		kbSigner: signer(holder.privateKey),
 		kbSignAlg: 'EdDSA',
 	});
 	return presenterInstance.present(issued, undefined, {
-		kb: { payload: { iat: Math.floor(Date.now() / 1000), aud, nonce, transaction_data: [transactionDataHash(CLOSED_PAYMENT)] } },
+		kb: {
+			payload: {
+				iat: Math.floor(Date.now() / 1000),
+				aud,
+				nonce,
+				transaction_data: [transactionDataHash(CLOSED_PAYMENT)],
+			},
+		},
 	});
 }
 
@@ -99,7 +109,8 @@ test('a presentation signed by the wrong holder key fails verification', async (
 	// Issue the open mandate bound to `holder`'s key, but sign the KB-JWT with `impostor`'s key.
 	const issuerInstance = new SDJwtInstance({
 		hasher: sha256Hasher,
-		saltGenerator: (length) => Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('base64url'),
+		saltGenerator: (length) =>
+			Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('base64url'),
 		signer: signer(issuer.privateKey),
 		signAlg: 'EdDSA',
 	});
@@ -110,7 +121,8 @@ test('a presentation signed by the wrong holder key fails verification', async (
 	});
 	const presenterInstance = new SDJwtInstance({
 		hasher: sha256Hasher,
-		saltGenerator: (length) => Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('base64url'),
+		saltGenerator: (length) =>
+			Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('base64url'),
 		kbSigner: signer(impostor.privateKey),
 		kbSignAlg: 'EdDSA',
 	});
@@ -125,6 +137,92 @@ test('a presentation signed by the wrong holder key fails verification', async (
 			expectedAudience: 'did:web:merchant.example',
 			expectedNonce: 'n-789',
 		}),
+	);
+});
+
+test('a presentation whose vct is some unrelated credential type is rejected (not just "any issuer-signed cnf-bearing token")', async () => {
+	const issuer = ed25519Keypair();
+	const holder = ed25519Keypair();
+
+	const issuerInstance = new SDJwtInstance({
+		hasher: sha256Hasher,
+		saltGenerator: (length) =>
+			Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('base64url'),
+		signer: signer(issuer.privateKey),
+		signAlg: 'EdDSA',
+	});
+	// Same issuer key, same cnf shape, empty constraints (i.e. "authorises anything") - but a
+	// vct for a wholly unrelated credential type, never an open payment mandate at all.
+	const issued = await issuerInstance.issue({
+		vct: 'some.other.credential',
+		constraints: [],
+		cnf: { jwk: holder.publicJwk },
+	});
+
+	const presenterInstance = new SDJwtInstance({
+		hasher: sha256Hasher,
+		saltGenerator: (length) =>
+			Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('base64url'),
+		kbSigner: signer(holder.privateKey),
+		kbSignAlg: 'EdDSA',
+	});
+	const token = await presenterInstance.present(issued, undefined, {
+		kb: {
+			payload: { iat: Math.floor(Date.now() / 1000), aud: 'did:web:merchant.example', nonce: 'n-vct-1' },
+		},
+	});
+
+	await assert.rejects(
+		() =>
+			verifyOpenPaymentMandatePresentation({
+				token,
+				issuerPublicJwk: issuer.publicJwk,
+				expectedAudience: 'did:web:merchant.example',
+				expectedNonce: 'n-vct-1',
+			}),
+		/vct/i,
+	);
+});
+
+test('an open checkout mandate presentation whose vct is some unrelated credential type is rejected', async () => {
+	const issuer = ed25519Keypair();
+	const holder = ed25519Keypair();
+
+	const issuerInstance = new SDJwtInstance({
+		hasher: sha256Hasher,
+		saltGenerator: (length) =>
+			Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('base64url'),
+		signer: signer(issuer.privateKey),
+		signAlg: 'EdDSA',
+	});
+	const issued = await issuerInstance.issue({
+		vct: 'some.other.credential',
+		constraints: [],
+		cnf: { jwk: holder.publicJwk },
+	});
+
+	const presenterInstance = new SDJwtInstance({
+		hasher: sha256Hasher,
+		saltGenerator: (length) =>
+			Buffer.from(crypto.getRandomValues(new Uint8Array(length))).toString('base64url'),
+		kbSigner: signer(holder.privateKey),
+		kbSignAlg: 'EdDSA',
+	});
+	const token = await presenterInstance.present(issued, undefined, {
+		kb: {
+			payload: { iat: Math.floor(Date.now() / 1000), aud: 'did:web:merchant.example', nonce: 'n-vct-2' },
+		},
+	});
+
+	await assert.rejects(
+		() =>
+			verifyOpenCheckoutMandatePresentation({
+				token,
+				issuerPublicJwk: issuer.publicJwk,
+				expectedAudience: 'did:web:merchant.example',
+				expectedNonce: 'n-vct-2',
+			}),
+		/vct/i,
 	);
 });
 
