@@ -113,6 +113,25 @@ test('createTrustExtensionCache re-checks once the TTL has elapsed', async () =>
 	assert.equal(calls, 2);
 });
 
+// Regression: createTrustExtensionCache used to be an unbounded Map - every (canonicalDid,
+// activation) lookup cached its result forever, regardless of outcome. A caller presenting a
+// fresh self-asserted DID per request (cheap: one keypair) and failing the trust check every
+// time would grow the cache without bound - a memory-exhaustion DoS vector. maxEntries caps the
+// entry count, evicting the oldest entry to make room for a new key.
+test('the cache is bounded: distinct canonicalDids beyond maxEntries evict the oldest, never growing past the cap', async () => {
+	const deps = {
+		resolveDidDocument: async () => null,
+		manifestCache: { get: async () => ({ ok: true }), clear() {} },
+		checkStatus: async () => ({ revoked: false, fresh: true }),
+	};
+	const cache = createTrustExtensionCache(deps, { maxEntries: 3 });
+	for (let i = 0; i < 10; i++) {
+		await cache.get(`did:example:caller-${i}`, { statusCheck: 'required' });
+		assert.ok(cache.size() <= 3, `size ${cache.size()} exceeded maxEntries after caller-${i}`);
+	}
+	assert.equal(cache.size(), 3);
+});
+
 // Every test above exercises exactly one check with a faked dependency - never reciprocal
 // linkage, manifest resolution and status all declared together, and never against the real
 // @cheqd/agent-identity building blocks (verifyReciprocalLinkage, createManifestCache's real
