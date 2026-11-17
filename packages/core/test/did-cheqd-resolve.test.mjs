@@ -55,6 +55,27 @@ test('a non-did:cheqd DID is rejected before any fetch', async () => {
 	assert.equal(called, false);
 });
 
+test('a non-canonical DID smuggling a second did:cheqd DID is rejected before any fetch', async () => {
+	// Starts with "did:cheqd:" (so a bare startsWith check lets it through), but embeds a path
+	// traversal segment that - against a real universal-resolver HTTP endpoint - normalises to a
+	// completely different (attacker-controlled) DID-Linked Resource. If the resolver ever
+	// constructs a URL/fetch from this string, the attacker's resource (whose `id` they can set
+	// to this exact requested string) would be returned as if it were a valid resolution.
+	const victim = 'did:cheqd:testnet:VICTIM00000000000000000000000000';
+	const attackerResource = 'did:cheqd:testnet:ATTACKER0000000000000000000000/resources/11111111-1111-1111-1111-111111111111';
+	const malicious = `${victim}/../${attackerResource}`;
+	let called = false;
+	const fetch = async () => {
+		called = true;
+		// Simulate the attacker's resource answering with its `id` set to the exact malicious
+		// string that was requested, so the existing `candidate.id !== did` check cannot catch it.
+		return jsonResponse(200, { id: malicious, verificationMethod: [] });
+	};
+	const resolve = createDidCheqdResolver({ resolverUrl: BASE, fetch });
+	assert.equal(await resolve(malicious), null);
+	assert.equal(called, false, 'the non-canonical DID must be rejected before any fetch/URL is constructed');
+});
+
 test('a network failure resolves to null, not a throw', async () => {
 	const fetch = async () => { throw new Error('ECONNREFUSED'); };
 	const resolve = createDidCheqdResolver({ resolverUrl: BASE, fetch });

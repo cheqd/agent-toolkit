@@ -94,6 +94,32 @@ async def test_a_non_did_cheqd_did_is_rejected_before_any_fetch():
     assert called["value"] is False
 
 
+async def test_a_non_canonical_did_smuggling_a_second_did_cheqd_did_is_rejected_before_any_fetch():
+    # Starts with "did:cheqd:" (so a bare startswith check lets it through), but embeds a path
+    # traversal segment that - against a real universal-resolver HTTP endpoint - normalises to a
+    # completely different (attacker-controlled) DID-Linked Resource. If the resolver ever
+    # constructs a URL/fetch from this string, the attacker's resource (whose `id` they can set
+    # to this exact requested string) would be returned as if it were a valid resolution.
+    victim = "did:cheqd:testnet:VICTIM00000000000000000000000000"
+    attacker_resource = (
+        "did:cheqd:testnet:ATTACKER0000000000000000000000/resources/11111111-1111-1111-1111-111111111111"
+    )
+    malicious = f"{victim}/../{attacker_resource}"
+    called = {"value": False}
+
+    async def fetch(_url):
+        called["value"] = True
+        # Simulate the attacker's resource answering with its `id` set to the exact malicious
+        # string that was requested, so the existing `document.id != did` check cannot catch it.
+        return json_response(200, {"id": malicious, "verificationMethod": []})
+
+    resolve = create_did_cheqd_resolver(resolver_url=BASE, fetch=fetch)
+    assert await resolve(malicious) is None
+    assert called["value"] is False, (
+        "the non-canonical DID must be rejected before any fetch/URL is constructed"
+    )
+
+
 async def test_a_network_failure_resolves_to_none_not_a_raise():
     async def fetch(_url):
         raise ConnectionError("ECONNREFUSED")
