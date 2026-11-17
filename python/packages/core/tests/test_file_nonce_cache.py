@@ -94,6 +94,26 @@ async def test_concurrent_consume_calls_for_the_same_nonce_exactly_one_succeeds(
     assert sum(1 for r in results if r) == 1
 
 
+# Regression: see the module doc comment for the two races this closes (unlink-then-open with
+# no serialization, then rename-then-open still without a per-key lock). This is a genuinely
+# timing-dependent race, not a deterministic one - 8 concurrent callers across 50 rounds is the
+# empirically-confirmed reproduction against the old code; do not "simplify" this to fewer/bigger
+# rounds without re-confirming against the old code first.
+async def test_concurrent_reclaims_of_the_same_expired_nonce_never_more_than_one_succeeds(tmp_path):
+    clock = {"value": 0.0}
+    cache = FileNonceCacheProvider(directory=tmp_path, now=lambda: clock["value"])
+    for round_ in range(50):
+        assert await cache.consume(f"n-round-{round_}", 1, "did:example:a") is True  # expires at clock+1000
+        clock["value"] += 2000  # now expired
+        results = await asyncio.gather(
+            *(cache.consume(f"n-round-{round_}", 60, "did:example:a") for _ in range(8))
+        )
+        assert sum(1 for r in results if r) == 1, (
+            f"round {round_}: exactly one concurrent reclaim of the same expired nonce must succeed, "
+            f"got {sum(1 for r in results if r)}"
+        )
+
+
 async def test_destroy_resolves_without_raising(tmp_path):
     cache = FileNonceCacheProvider(directory=tmp_path)
     await cache.destroy()

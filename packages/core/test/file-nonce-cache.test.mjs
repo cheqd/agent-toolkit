@@ -114,6 +114,34 @@ test('concurrent consume() calls for the same nonce: exactly one succeeds', () =
 		assert.equal(results.filter(Boolean).length, 1);
 	}));
 
+// Regression: reclaiming an expired record used to be rm(path) then open(path, 'wx') - not
+// atomic as a pair. One caller's rm() could delete a DIFFERENT caller's freshly-written, valid,
+// non-expired record just after that caller won its own create, clearing the way for the first
+// caller's own open('wx') to also succeed. Multiple concurrent reclaims of the SAME expired
+// nonce could then all return true - a genuine replay accepted, not merely an occasional false
+// rejection as the module's own doc comment used to (wrongly) promise. This is a genuinely
+// timing-dependent race, not a deterministic one: empirically (see the fix's PR description),
+// 8 concurrent callers reproduces it in roughly 2-7 of every 50 rounds against the old code -
+// HIGHER concurrency (e.g. 20) reproduces it less reliably, not more, likely because it pushes
+// past libuv's default thread-pool size (4) and changes how the queued fs operations interleave.
+// 50 rounds of 8 concurrent calls is the empirically-confirmed reproduction; do not "simplify"
+// this to fewer/bigger rounds without re-confirming against the old code first.
+test('concurrent reclaims of the SAME expired nonce: never more than one succeeds, across many rounds', () =>
+	withTempDir(async (dir) => {
+		let clock = 0;
+		const cache = new FileNonceCacheProvider({ directory: dir, now: () => clock });
+		for (let round = 0; round < 50; round++) {
+			assert.equal(await cache.consume(`n-round-${round}`, 1, 'did:example:a'), true); // expires at clock+1000
+			clock += 2000; // now expired
+			const results = await Promise.all(Array.from({ length: 8 }, () => cache.consume(`n-round-${round}`, 60, 'did:example:a')));
+			assert.equal(
+				results.filter(Boolean).length,
+				1,
+				`round ${round}: exactly one concurrent reclaim of the same expired nonce must succeed, got ${results.filter(Boolean).length}`,
+			);
+		}
+	}));
+
 test('destroy() resolves without throwing', () =>
 	withTempDir(async (dir) => {
 		const cache = new FileNonceCacheProvider({ directory: dir });
