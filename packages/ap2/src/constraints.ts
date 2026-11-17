@@ -131,15 +131,52 @@ function evaluateBudget(constraint: Budget, closed: PaymentMandate, context: Man
 	return [];
 }
 
+/** A leading ISO-8601 date (`YYYY-MM-DD`), optionally followed by a time component. Required
+ * before trusting `Date.parse`, which alone accepts far looser, non-ISO formats. */
+const ISO_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}([T ].*)?$/;
+
+/** Parses a well-formed ISO-8601 date (or date-time) string into epoch milliseconds, for
+ * chronological comparison. Returns `undefined` for anything else, including a non-string
+ * value or a string that merely looks date-shaped but isn't a real calendar date (e.g.
+ * `'2027-06-99'`), both of which `Date.parse` rejects as `NaN`. */
+function parseDateString(value: unknown): number | undefined {
+	if (typeof value !== 'string' || !ISO_DATE_PREFIX.test(value)) return undefined;
+	const parsed = Date.parse(value);
+	return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+/**
+ * `execution_date` is a holder-controlled field of the closed mandate and, like
+ * `payment_amount`, is typed as a plain TS `string` - erased at runtime. Found by review: a
+ * mixed-type relational comparison (`<`/`>`) does NOT fall back to a string comparison; it
+ * coerces both sides to Number, so a numeric `execution_date` (e.g. `20300101`) compared
+ * against string window bounds became `NaN < NaN`/`NaN > NaN`, always `false` - the constraint
+ * silently returned no violations. A malformed-but-string date (e.g. `'2027-06-99'`) could
+ * also sort lexicographically "inside" the window despite not being a real date. Python already
+ * fails closed here (an int/str comparison raises `TypeError`); this validates `execution_date`
+ * is a well-formed, parseable date before any comparison and rejects otherwise, and compares
+ * parsed epoch milliseconds rather than raw strings to avoid date formats that don't sort
+ * lexicographically the same as chronologically.
+ */
 function evaluateExecutionDate(constraint: ExecutionDateConstraint, closed: PaymentMandate): string[] {
-	const execDate = closed.execution_date;
-	if (!execDate) return [];
-	const violations: string[] = [];
-	if (constraint.not_before && execDate < constraint.not_before) {
-		violations.push(`Execution date ${execDate} is before allowed window ${constraint.not_before}`);
+	const execDate: unknown = closed.execution_date;
+	if (execDate === undefined) return [];
+	const execMs = parseDateString(execDate);
+	if (execMs === undefined) {
+		return [`Malformed execution_date: expected a well-formed ISO-8601 date string, got ${JSON.stringify(execDate)}`];
 	}
-	if (constraint.not_after && execDate > constraint.not_after) {
-		violations.push(`Execution date ${execDate} is after allowed window ${constraint.not_after}`);
+	const violations: string[] = [];
+	if (constraint.not_before !== undefined) {
+		const notBeforeMs = parseDateString(constraint.not_before);
+		if (notBeforeMs !== undefined && execMs < notBeforeMs) {
+			violations.push(`Execution date ${execDate} is before allowed window ${constraint.not_before}`);
+		}
+	}
+	if (constraint.not_after !== undefined) {
+		const notAfterMs = parseDateString(constraint.not_after);
+		if (notAfterMs !== undefined && execMs > notAfterMs) {
+			violations.push(`Execution date ${execDate} is after allowed window ${constraint.not_after}`);
+		}
 	}
 	return violations;
 }
