@@ -6,6 +6,7 @@ import { resolveManifest, createManifestCache } from '../dist/index.js';
 
 const NOW = Date.parse('2026-11-03T12:00:00Z');
 const DID = 'did:cheqd:testnet:0c3581f0-011f-4263-b1ca-15ad70d54ede';
+const COLLECTION = '0c3581f0-011f-4263-b1ca-15ad70d54ede';
 const RESOURCE_ID = '1a79a313-8fc3-421c-af3d-34730fa046d1';
 const BASE = 'https://resolver.test/1.0/identifiers';
 const NAME = 'trust-config';
@@ -20,7 +21,7 @@ function world(content, opts = {}) {
 	const bytes = Buffer.from(JSON.stringify(content));
 	const checksum = opts.checksum ?? createHash('sha256').update(bytes).digest('hex');
 	const linked = {
-		resourceId: RESOURCE_ID, resourceName: NAME, resourceType: KIND,
+		resourceId: RESOURCE_ID, resourceName: NAME, resourceType: KIND, resourceCollectionId: COLLECTION,
 		resourceVersion: '2026-11-01T00:00:00Z', checksum, nextVersionId: null,
 		...opts.linked,
 	};
@@ -56,6 +57,19 @@ test('a checksum that does not match the bytes is rejected', async () => {
 	const result = await resolveManifest(DID, KIND, NAME, { resolvers: [BASE], fetch: fetchFor(w), primitives, now: () => NOW });
 	assert.equal(result.ok, false);
 	assert.ok(result.reasons.includes('checksum_mismatch'));
+});
+
+// Regression: resolveManifest used to check only (resourceType, resourceName), never that the
+// returned resource's resourceCollectionId actually belongs to the DID being resolved - so a
+// resolver answering with metadata from a DIFFERENT DID's collection (bug, misconfiguration, or
+// compromise) would be accepted as long as that other collection happened to have a resource of
+// the same kind and name. ledger-anchored.ts's equivalent check (`collection_mismatch`) already
+// guards this for status lists; resolveManifest must too.
+test('a resource bound to a different DID collection is rejected even with matching kind/name', async () => {
+	const w = world({ a: 1 }, { linked: { resourceCollectionId: '99999999-9999-4999-8999-999999999999' } });
+	const result = await resolveManifest(DID, KIND, NAME, { resolvers: [BASE], fetch: fetchFor(w), primitives, now: () => NOW });
+	assert.equal(result.ok, false);
+	assert.ok(result.reasons.includes('collection_mismatch'));
 });
 
 test('the wrong manifest kind at the same name is rejected', async () => {
