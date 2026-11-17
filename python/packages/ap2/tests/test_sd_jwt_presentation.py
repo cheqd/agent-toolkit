@@ -23,6 +23,7 @@ from sd_jwt.issuer import SDJWTIssuer
 
 from cheqd_agent_identity_ap2.sd_jwt_presentation import (
     transaction_data_hash,
+    verify_open_checkout_mandate_presentation,
     verify_open_payment_mandate_presentation,
     verify_transaction_data_binding,
 )
@@ -69,10 +70,11 @@ def build_presentation(
     nonce: str,
     constraints: list | None = None,
     include_transaction_data: bool = True,
+    vct: str = "mandate.payment.open.1",
 ) -> str:
     issuer_jwk = _jwcrypto_key_from_cryptography(issuer_private_key)
     open_mandate_payload = {
-        "vct": "mandate.payment.open.1",
+        "vct": vct,
         "constraints": constraints or [{"type": "payment.amount_range", "currency": "USD", "max": 5000}],
         "cnf": {"jwk": holder_public_jwk},
     }
@@ -162,4 +164,54 @@ async def test_a_presentation_signed_by_the_wrong_holder_key_fails_verification(
             issuer_public_jwk=issuer_public_jwk,
             expected_audience="did:web:merchant.example",
             expected_nonce="n-789",
+        )
+
+
+async def test_a_presentation_whose_vct_is_some_unrelated_credential_type_is_rejected():
+    # Same issuer key, same cnf shape, empty constraints (i.e. "authorises anything") - but a
+    # vct for a wholly unrelated credential type, never an open payment mandate at all.
+    issuer_public_jwk, issuer_private_key = ed25519_keypair()
+    holder_public_jwk, holder_private_key = ed25519_keypair()
+
+    token = build_presentation(
+        issuer_private_key=issuer_private_key,
+        holder_public_jwk=holder_public_jwk,
+        kb_signing_key=holder_private_key,
+        aud="did:web:merchant.example",
+        nonce="n-vct-1",
+        constraints=[],
+        include_transaction_data=False,
+        vct="some.other.credential",
+    )
+
+    with pytest.raises(ValueError, match="vct"):
+        await verify_open_payment_mandate_presentation(
+            token=token,
+            issuer_public_jwk=issuer_public_jwk,
+            expected_audience="did:web:merchant.example",
+            expected_nonce="n-vct-1",
+        )
+
+
+async def test_an_open_checkout_mandate_presentation_whose_vct_is_some_unrelated_credential_type_is_rejected():
+    issuer_public_jwk, issuer_private_key = ed25519_keypair()
+    holder_public_jwk, holder_private_key = ed25519_keypair()
+
+    token = build_presentation(
+        issuer_private_key=issuer_private_key,
+        holder_public_jwk=holder_public_jwk,
+        kb_signing_key=holder_private_key,
+        aud="did:web:merchant.example",
+        nonce="n-vct-2",
+        constraints=[],
+        include_transaction_data=False,
+        vct="some.other.credential",
+    )
+
+    with pytest.raises(ValueError, match="vct"):
+        await verify_open_checkout_mandate_presentation(
+            token=token,
+            issuer_public_jwk=issuer_public_jwk,
+            expected_audience="did:web:merchant.example",
+            expected_nonce="n-vct-2",
         )

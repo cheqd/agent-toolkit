@@ -84,6 +84,14 @@ class KeyBinding:
     transaction_data: tuple[str, ...] = ()
 
 
+#: The AP2 `vct` literal for an open payment mandate - see `OpenPaymentMandate` in `types.py`,
+#: ported directly from upstream `google-agentic-commerce/AP2`'s own schema.
+OPEN_PAYMENT_MANDATE_VCT = "mandate.payment.open.1"
+
+#: The AP2 `vct` literal for an open checkout mandate - see `OpenCheckoutMandate` in `types.py`,
+#: ported directly from upstream `google-agentic-commerce/AP2`'s own schema.
+OPEN_CHECKOUT_MANDATE_VCT = "mandate.checkout.open.1"
+
 Payload = TypeVar("Payload")
 
 
@@ -108,6 +116,7 @@ def _decode_kb_jwt_payload(presentation: str) -> dict[str, Any]:
 
 async def _verify_open_mandate(
     *,
+    expected_vct: str,
     token: str,
     issuer_public_jwk: dict[str, Any],
     expected_audience: str,
@@ -128,6 +137,14 @@ async def _verify_open_mandate(
         issuer_alg=_alg_for_jwk(issuer_public_jwk),
     )
     payload = verifier.get_verified_payload()
+
+    # Fail closed: a `cnf`-bearing token signed by the right issuer key is NOT necessarily an
+    # open payment/checkout mandate - the issuer key may sign other credential types too, and
+    # without this check any of them (e.g. one with `constraints: []`) would be accepted here
+    # and then treated as authorising arbitrary payments/checkouts downstream.
+    actual_vct = payload.get("vct")
+    if actual_vct != expected_vct:
+        raise ValueError(f"vct_mismatch: expected {expected_vct}, got {actual_vct!r}")
 
     now = current_date if current_date is not None else int(time.time())
     exp = payload.get("exp")
@@ -167,8 +184,14 @@ async def verify_open_payment_mandate_presentation(
     skew_seconds: int = 60,
     current_date: Optional[int] = None,
 ) -> VerifiedOpenMandatePresentation[OpenPaymentMandate]:
-    """Verify a presented `OpenPaymentMandate` (SD-JWT-VC + KB-JWT)."""
+    """Verify a presented `OpenPaymentMandate` (SD-JWT-VC + KB-JWT).
+
+    Rejects (fails closed) unless the presented token's `vct` is exactly
+    `OPEN_PAYMENT_MANDATE_VCT` - an issuer-signed, cnf-bound token of some other credential type
+    must never be accepted here.
+    """
     return await _verify_open_mandate(
+        expected_vct=OPEN_PAYMENT_MANDATE_VCT,
         token=token,
         issuer_public_jwk=issuer_public_jwk,
         expected_audience=expected_audience,
@@ -187,8 +210,14 @@ async def verify_open_checkout_mandate_presentation(
     skew_seconds: int = 60,
     current_date: Optional[int] = None,
 ) -> VerifiedOpenMandatePresentation[OpenCheckoutMandate]:
-    """Verify a presented `OpenCheckoutMandate` (SD-JWT-VC + KB-JWT)."""
+    """Verify a presented `OpenCheckoutMandate` (SD-JWT-VC + KB-JWT).
+
+    Rejects (fails closed) unless the presented token's `vct` is exactly
+    `OPEN_CHECKOUT_MANDATE_VCT` - an issuer-signed, cnf-bound token of some other credential type
+    must never be accepted here.
+    """
     return await _verify_open_mandate(
+        expected_vct=OPEN_CHECKOUT_MANDATE_VCT,
         token=token,
         issuer_public_jwk=issuer_public_jwk,
         expected_audience=expected_audience,

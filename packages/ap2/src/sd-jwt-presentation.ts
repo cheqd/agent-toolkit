@@ -75,12 +75,18 @@ export interface VerifyOpenMandateOptions {
 export interface VerifiedOpenMandatePresentation<Payload> {
 	readonly payload: Payload;
 	/** The KB-JWT's own payload, including `transaction_data` if present. */
-	readonly keyBinding: { readonly aud: string; readonly nonce: string; readonly iat: number; readonly transaction_data?: readonly string[] };
+	readonly keyBinding: {
+		readonly aud: string;
+		readonly nonce: string;
+		readonly iat: number;
+		readonly transaction_data?: readonly string[];
+	};
 	/** The `cnf.jwk` the KB-JWT was bound to - feed this to `cnf-fusion.ts`. */
 	readonly cnfJwk: Record<string, unknown>;
 }
 
-async function verifyOpenMandate<Payload extends { cnf: { jwk: Record<string, unknown> } }>(
+async function verifyOpenMandate<Payload extends { vct: string; cnf: { jwk: Record<string, unknown> } }>(
+	expectedVct: Payload['vct'],
 	options: VerifyOpenMandateOptions,
 ): Promise<VerifiedOpenMandatePresentation<Payload>> {
 	const instance = new SDJwtInstance<Record<string, unknown>>({
@@ -95,6 +101,12 @@ async function verifyOpenMandate<Payload extends { cnf: { jwk: Record<string, un
 		...(options.currentDate !== undefined ? { currentDate: options.currentDate } : {}),
 	});
 	const payload = result.payload as unknown as Payload;
+	// Fail closed: a `cnf`-bearing token signed by the right issuer key is NOT necessarily an
+	// open payment/checkout mandate - the issuer key may sign other credential types too, and
+	// without this check any of them (e.g. one with `constraints: []`) would be accepted here
+	// and then treated as authorising arbitrary payments/checkouts downstream.
+	if (payload['vct'] !== expectedVct)
+		throw new Error(`vct_mismatch: expected ${expectedVct}, got ${String(payload['vct'])}`);
 	const kb = (result as { kb?: { payload: Record<string, unknown> } }).kb;
 	if (!kb) throw new Error('missing_key_binding_jwt');
 	if (kb.payload['aud'] !== options.expectedAudience) throw new Error('key_binding_audience_mismatch');
@@ -111,14 +123,30 @@ async function verifyOpenMandate<Payload extends { cnf: { jwk: Record<string, un
 	};
 }
 
-/** Verify a presented `OpenPaymentMandate` (SD-JWT-VC + KB-JWT). */
-export function verifyOpenPaymentMandatePresentation(options: VerifyOpenMandateOptions): Promise<VerifiedOpenMandatePresentation<OpenPaymentMandate>> {
-	return verifyOpenMandate<OpenPaymentMandate>(options);
+/** The AP2 `vct` literal for an open payment mandate - see `OpenPaymentMandate` in `types.ts`,
+ * ported directly from upstream `google-agentic-commerce/AP2`'s own schema. */
+export const OPEN_PAYMENT_MANDATE_VCT = 'mandate.payment.open.1' as const;
+
+/** The AP2 `vct` literal for an open checkout mandate - see `OpenCheckoutMandate` in `types.ts`,
+ * ported directly from upstream `google-agentic-commerce/AP2`'s own schema. */
+export const OPEN_CHECKOUT_MANDATE_VCT = 'mandate.checkout.open.1' as const;
+
+/** Verify a presented `OpenPaymentMandate` (SD-JWT-VC + KB-JWT). Rejects (fails closed) unless
+ * the presented token's `vct` is exactly `OPEN_PAYMENT_MANDATE_VCT` - an issuer-signed, cnf-bound
+ * token of some other credential type must never be accepted here. */
+export function verifyOpenPaymentMandatePresentation(
+	options: VerifyOpenMandateOptions,
+): Promise<VerifiedOpenMandatePresentation<OpenPaymentMandate>> {
+	return verifyOpenMandate<OpenPaymentMandate>(OPEN_PAYMENT_MANDATE_VCT, options);
 }
 
-/** Verify a presented `OpenCheckoutMandate` (SD-JWT-VC + KB-JWT). */
-export function verifyOpenCheckoutMandatePresentation(options: VerifyOpenMandateOptions): Promise<VerifiedOpenMandatePresentation<OpenCheckoutMandate>> {
-	return verifyOpenMandate<OpenCheckoutMandate>(options);
+/** Verify a presented `OpenCheckoutMandate` (SD-JWT-VC + KB-JWT). Rejects (fails closed) unless
+ * the presented token's `vct` is exactly `OPEN_CHECKOUT_MANDATE_VCT` - an issuer-signed, cnf-bound
+ * token of some other credential type must never be accepted here. */
+export function verifyOpenCheckoutMandatePresentation(
+	options: VerifyOpenMandateOptions,
+): Promise<VerifiedOpenMandatePresentation<OpenCheckoutMandate>> {
+	return verifyOpenMandate<OpenCheckoutMandate>(OPEN_CHECKOUT_MANDATE_VCT, options);
 }
 
 /**
@@ -141,7 +169,10 @@ export function transactionDataHash(closedMandateContent: unknown): string {
  * fuzzing: a function or `Symbol` value, neither of which `JSON.stringify` can serialize) -
  * `closedMandateContent` is `unknown` because this checks caller-supplied data, not because any
  * JS value is a meaningful input. */
-export function verifyTransactionDataBinding(keyBinding: VerifiedOpenMandatePresentation<unknown>['keyBinding'], closedMandateContent: unknown): boolean {
+export function verifyTransactionDataBinding(
+	keyBinding: VerifiedOpenMandatePresentation<unknown>['keyBinding'],
+	closedMandateContent: unknown,
+): boolean {
 	const declared = keyBinding.transaction_data ?? [];
 	let hash: string;
 	try {
