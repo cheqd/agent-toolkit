@@ -75,6 +75,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** Extracts the did:cheqd collection id (the DID's own unique identifier segment) from `did`. */
+function collectionIdOf(did: string): string {
+	const match = /^did:cheqd:(?:mainnet|testnet):([A-Za-z0-9_-]{16,64})$/.exec(did);
+	if (match === null) fail('unsupported_did');
+	return match[1] ?? '';
+}
+
 /**
  * Resolve one manifest resource by DID, kind and resource name. Resolves with `ok: false` and
  * reasons rather than throwing, for every failure including a malformed input.
@@ -151,6 +158,11 @@ async function checkOne(
 	if (!Array.isArray(linked) || linked.length !== 1) fail('ambiguous_or_missing_resource');
 	const resource = linked[0];
 	if (!isRecord(resource)) fail('malformed_metadata');
+	// Bind the resolved resource to the DID's own collection, not merely to the (kind, name) pair
+	// a resolver happened to answer with - see ledger-anchored.ts's identical check for why: a
+	// resolver returning metadata for a different DID's collection (bug, misconfiguration, or
+	// compromise) must not be accepted just because it has a matching resourceType/resourceName.
+	if (resource['resourceCollectionId'] !== collectionIdOf(did)) fail('collection_mismatch');
 	if (resource['resourceType'] !== kind || resource['resourceName'] !== resourceName) fail('resource_mismatch');
 	if (resource['nextVersionId'] !== null && resource['nextVersionId'] !== undefined) fail('not_latest_version');
 	const resourceId = resource['resourceId'];

@@ -155,6 +155,10 @@ test('a full discovery flow - real linkage check, real manifest resolution, stat
 			linkedResourceMetadata: [
 				{
 					resourceId,
+					// Must match ANCHORED's own method-specific-id (collectionIdOf) - resolveManifest now
+					// binds the resolved resource to the DID's own collection, not merely to a matching
+					// (kind, name) pair.
+					resourceCollectionId: ANCHORED.split(':').pop(),
 					resourceName: 'trust-config',
 					resourceType: 'TrustConfigManifest',
 					resourceVersion: '2026-11-01T00:00:00Z',
@@ -218,6 +222,9 @@ test('the same real flow fails closed when the manifest checksum does not match 
 			linkedResourceMetadata: [
 				{
 					resourceId: '1a79a313-8fc3-421c-af3d-34730fa046d1',
+					// Must match ANCHORED's own method-specific-id - see the other test's identical
+					// comment above.
+					resourceCollectionId: ANCHORED.split(':').pop(),
 					resourceName: 'trust-config',
 					resourceType: 'TrustConfigManifest',
 					resourceVersion: '2026-11-01T00:00:00Z',
