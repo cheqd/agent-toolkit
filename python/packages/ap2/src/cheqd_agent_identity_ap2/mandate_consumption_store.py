@@ -22,13 +22,62 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Literal, Optional, Protocol, Sequence, Union
+from typing import Any, AsyncIterator, Callable, Literal, Optional, Protocol, Sequence, Union
 
 from cheqd_agent_identity_ap2.types import MandateContext
+
+
+def _assert_valid_amount(amount_minor_units: float) -> None:
+    """`amount_minor_units` must be a finite, non-negative integer.
+
+    Rejects `NaN` (which `json.dumps` writes as the literal `NaN` and `json.loads` reads back as
+    a float that is never greater than any budget, permanently defeating the budget check - see
+    the `_validate_stored_total` corruption guard below), `inf`, non-integral floats, and negative
+    amounts (which would act as a budget refund rather than a use).
+    """
+    is_valid = (
+        not isinstance(amount_minor_units, bool)
+        and isinstance(amount_minor_units, (int, float))
+        and math.isfinite(amount_minor_units)
+        and amount_minor_units == int(amount_minor_units)
+        and amount_minor_units >= 0
+    )
+    if not is_valid:
+        raise ValueError(
+            f"amount_minor_units must be a finite, non-negative integer (got {amount_minor_units!r})"
+        )
+
+
+def _validate_stored_total(value: Any, field: str) -> float:
+    """Validates a value read back from a persisted context as a non-negative integer, failing
+    closed (raising) rather than silently coercing corrupt data to `0`.
+
+    `None` (the field was never written) is treated as a fresh/absent value and defaults to `0` -
+    that is not corruption, just a mandate with no prior recorded field. Anything else that is
+    present but not a valid non-negative integer (including the `NaN` `json.loads` reads back from
+    a pre-validation bug's `json.dumps(float("nan"))`, or a negative number) is corrupt and must
+    not be silently reset, since doing so erases budget history instead of refusing to proceed.
+    """
+    if value is None:
+        return 0
+    is_valid = (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+        and value == int(value)
+        and value >= 0
+    )
+    if not is_valid:
+        raise ValueError(
+            f"Corrupt mandate consumption record: {field} is not a non-negative integer (got {value!r})"
+        )
+    return value
 
 
 @dataclass(frozen=True)
@@ -93,8 +142,12 @@ class _FileMandateConsumptionStore:
         self._now = now or (lambda: time.time() * 1000)
         self._ready = False
         self._ready_lock = asyncio.Lock()
-        # Per-mandate-id in-process serialization for record_use's read-modify-write.
+        # Per-mandate-id in-process serialization for record_use's read-modify-write. Entries are
+        # reference-counted via `_lock_refcounts` and pruned once the count drops to zero (no
+        # caller currently holding or waiting on that key's lock), so these dicts do not grow
+        # without bound across the lifetime of a long-running process.
         self._locks: dict[str, asyncio.Lock] = {}
+        self._lock_refcounts: dict[str, int] = {}
 
     async def _ensure_directory(self) -> None:
         if self._ready:
@@ -113,12 +166,36 @@ class _FileMandateConsumptionStore:
         key = hashlib.sha256(f"context\x00{mandate_id}".encode("utf-8")).hexdigest()
         return self._directory / f"{key}.json"
 
-    def _lock_for(self, mandate_id: str) -> asyncio.Lock:
+    @asynccontextmanager
+    async def _locked(self, mandate_id: str) -> AsyncIterator[None]:
+        """Acquires the per-mandate-id lock, reference-counted so the backing `asyncio.Lock`
+        (and its refcount entry) is pruned from `self._locks`/`self._lock_refcounts` once no
+        caller is holding or waiting on it any more.
+
+        The refcount increment below happens synchronously, before the lock is acquired (and
+        therefore before this coroutine can be suspended) - so a concurrent caller for the same
+        `mandate_id` always observes a non-zero refcount and reuses the same lock instance rather
+        than racing to create a second one, or pruning the lock out from under a caller that is
+        about to wait on it. This must not reintroduce the #34 check-then-record race: deletion
+        only ever happens after the refcount returns to zero, i.e. after every holder for this key
+        has fully released the lock, so a key's serialization is never dropped while any caller
+        is still mid-flight on it.
+        """
+        self._lock_refcounts[mandate_id] = self._lock_refcounts.get(mandate_id, 0) + 1
         lock = self._locks.get(mandate_id)
         if lock is None:
             lock = asyncio.Lock()
             self._locks[mandate_id] = lock
-        return lock
+        try:
+            async with lock:
+                yield
+        finally:
+            remaining = self._lock_refcounts[mandate_id] - 1
+            if remaining == 0:
+                del self._lock_refcounts[mandate_id]
+                del self._locks[mandate_id]
+            else:
+                self._lock_refcounts[mandate_id] = remaining
 
     async def _read_context(self, mandate_id: str) -> MandateContext:
         try:
@@ -127,12 +204,8 @@ class _FileMandateConsumptionStore:
             return MandateContext(total_amount=0, total_uses=0)
         parsed = json.loads(raw)
         context: MandateContext = {
-            "total_amount": parsed.get("total_amount", 0)
-            if isinstance(parsed.get("total_amount"), (int, float))
-            else 0,
-            "total_uses": parsed.get("total_uses", 0)
-            if isinstance(parsed.get("total_uses"), (int, float))
-            else 0,
+            "total_amount": _validate_stored_total(parsed.get("total_amount"), "total_amount"),
+            "total_uses": _validate_stored_total(parsed.get("total_uses"), "total_uses"),
         }
         if isinstance(parsed.get("last_used_date"), (int, float)):
             context["last_used_date"] = parsed["last_used_date"]
@@ -152,8 +225,9 @@ class _FileMandateConsumptionStore:
         return True
 
     async def record_use(self, mandate_id: str, amount_minor_units: float) -> MandateContext:
+        _assert_valid_amount(amount_minor_units)
         await self._ensure_directory()
-        async with self._lock_for(mandate_id):
+        async with self._locked(mandate_id):
             current = await self._read_context(mandate_id)
             updated: MandateContext = {
                 "total_amount": current["total_amount"] + amount_minor_units,
@@ -173,8 +247,9 @@ class _FileMandateConsumptionStore:
         amount_minor_units: float,
         check: Callable[[MandateContext], Sequence[str]],
     ) -> CheckAndRecordUseResult:
+        _assert_valid_amount(amount_minor_units)
         await self._ensure_directory()
-        async with self._lock_for(mandate_id):
+        async with self._locked(mandate_id):
             current = await self._read_context(mandate_id)
             violations = check(current)
             if len(violations) > 0:

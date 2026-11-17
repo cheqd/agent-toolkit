@@ -55,7 +55,10 @@ export interface MandateConsumptionStore {
 		mandateId: string,
 		amountMinorUnits: number,
 		check: (context: MandateContext) => readonly string[],
-	): Promise<{ readonly ok: true; readonly context: MandateContext } | { readonly ok: false; readonly violations: readonly string[] }>;
+	): Promise<
+		| { readonly ok: true; readonly context: MandateContext }
+		| { readonly ok: false; readonly violations: readonly string[] }
+	>;
 }
 
 function isEexist(error: unknown): boolean {
@@ -65,25 +68,82 @@ function isEnoent(error: unknown): boolean {
 	return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
 }
 
-export function createMandateConsumptionStore(options: MandateConsumptionStoreOptions): MandateConsumptionStore {
+/**
+ * `amountMinorUnits` must be a finite, non-negative integer. Rejects `NaN` (which
+ * `JSON.stringify` silently turns into `null`, corrupting the stored total on readback - see the
+ * `readContext` corruption guard below), `Infinity`, non-integers, and negative amounts (which
+ * would act as a budget refund rather than a use).
+ */
+function assertValidAmount(amountMinorUnits: number): void {
+	if (!Number.isInteger(amountMinorUnits) || amountMinorUnits < 0) {
+		throw new RangeError(
+			`amountMinorUnits must be a finite, non-negative integer (received ${String(amountMinorUnits)})`,
+		);
+	}
+}
+
+/**
+ * Validates a value read back from a persisted context as a non-negative integer, failing
+ * closed (throwing) rather than silently coercing corrupt data to `0`. A missing field (`undefined`)
+ * is treated as a fresh/absent value and defaults to `0` - that is not corruption, just a mandate
+ * with no prior recorded field. Anything else that is present but not a valid non-negative
+ * integer (including `null`, the JSON encoding of a `NaN` written by a pre-validation bug, or a
+ * negative number) is corrupt and must not be silently reset, since doing so erases budget
+ * history instead of refusing to proceed.
+ */
+function readStoredNonNegativeInt(value: unknown, field: string): number {
+	if (value === undefined) return 0;
+	if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+		throw new Error(
+			`Corrupt mandate consumption record: ${field} is not a valid non-negative integer (stored value: ${JSON.stringify(value)})`,
+		);
+	}
+	return value;
+}
+
+export function createMandateConsumptionStore(
+	options: MandateConsumptionStoreOptions,
+): MandateConsumptionStore {
 	const now = options.now ?? Date.now;
 	let ready: Promise<void> | undefined;
 	const ensureDirectory = async (): Promise<void> => {
 		ready ??= mkdir(options.directory, { recursive: true }).then(() => undefined);
 		await ready;
 	};
-	const consumedPath = (mandateId: string) => join(options.directory, `${createHash('sha256').update(`consumed\u0000${mandateId}`).digest('hex')}.json`);
-	const contextPath = (mandateId: string) => join(options.directory, `${createHash('sha256').update(`context\u0000${mandateId}`).digest('hex')}.json`);
+	const consumedPath = (mandateId: string) =>
+		join(
+			options.directory,
+			`${createHash('sha256').update(`consumed\u0000${mandateId}`).digest('hex')}.json`,
+		);
+	const contextPath = (mandateId: string) =>
+		join(options.directory, `${createHash('sha256').update(`context\u0000${mandateId}`).digest('hex')}.json`);
 
-	// Per-mandate-id in-process serialization for recordUse's read-modify-write.
+	// Per-mandate-id in-process serialization for recordUse's read-modify-write. Entries are
+	// pruned once their chain settles with nothing else queued for that key (see below), so this
+	// map does not grow without bound across the lifetime of a long-running process.
 	const queues = new Map<string, Promise<unknown>>();
 	function enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
 		const prior = queues.get(key) ?? Promise.resolve();
 		const next = prior.then(task, task);
-		queues.set(
-			key,
-			next.catch(() => undefined),
+		// Never-rejecting tail used both as the next caller's `prior` and as the identity we check
+		// before pruning. Swallowing the error here (a later `.catch` further down) - not on
+		// `next`, which still propagates to this call's own caller - is what lets subsequent calls
+		// for the same key keep running after an earlier one throws.
+		const settled = next.then(
+			() => undefined,
+			() => undefined,
 		);
+		queues.set(key, settled);
+		void settled.then(() => {
+			// Only prune if nobody enqueued a newer task for this key while we were running: a
+			// newer `enqueue` call would have synchronously overwritten `queues.get(key)` with its
+			// own `settled` promise before this callback runs. Checking identity, not just
+			// presence, is what avoids a window where this key's serialization is lost while
+			// another caller is still mid-flight on it (the #34 race this store exists to avoid).
+			if (queues.get(key) === settled) {
+				queues.delete(key);
+			}
+		});
 		return next;
 	}
 
@@ -92,8 +152,8 @@ export function createMandateConsumptionStore(options: MandateConsumptionStoreOp
 			const raw = await readFile(contextPath(mandateId), 'utf8');
 			const parsed = JSON.parse(raw) as Partial<MandateContext>;
 			return {
-				total_amount: typeof parsed.total_amount === 'number' ? parsed.total_amount : 0,
-				total_uses: typeof parsed.total_uses === 'number' ? parsed.total_uses : 0,
+				total_amount: readStoredNonNegativeInt(parsed.total_amount, 'total_amount'),
+				total_uses: readStoredNonNegativeInt(parsed.total_uses, 'total_uses'),
 				...(typeof parsed.last_used_date === 'number' ? { last_used_date: parsed.last_used_date } : {}),
 			};
 		} catch (error) {
@@ -102,7 +162,7 @@ export function createMandateConsumptionStore(options: MandateConsumptionStoreOp
 		}
 	}
 
-	return {
+	const store: MandateConsumptionStore = {
 		async consumeOnce(mandateId) {
 			await ensureDirectory();
 			try {
@@ -120,6 +180,7 @@ export function createMandateConsumptionStore(options: MandateConsumptionStoreOp
 		},
 
 		async recordUse(mandateId, amountMinorUnits) {
+			assertValidAmount(amountMinorUnits);
 			await ensureDirectory();
 			return enqueue(mandateId, async () => {
 				const current = await readContext(mandateId);
@@ -144,6 +205,7 @@ export function createMandateConsumptionStore(options: MandateConsumptionStoreOp
 		},
 
 		async checkAndRecordUse(mandateId, amountMinorUnits, check) {
+			assertValidAmount(amountMinorUnits);
 			await ensureDirectory();
 			return enqueue(mandateId, async () => {
 				const current = await readContext(mandateId);
@@ -164,4 +226,16 @@ export function createMandateConsumptionStore(options: MandateConsumptionStoreOp
 			});
 		},
 	};
+
+	// Test-only diagnostic, not part of the public `MandateConsumptionStore` contract: lets the
+	// regression test for the unbounded-queue-map fix (L3) observe that `queues` is pruned back
+	// down rather than growing forever, without the test needing a handle on the closure-private
+	// `queues` map itself. Non-enumerable so it does not show up in normal iteration/serialization
+	// of the returned store.
+	Object.defineProperty(store, '__queueSizeForTesting', {
+		value: () => queues.size,
+		enumerable: false,
+	});
+
+	return store;
 }
