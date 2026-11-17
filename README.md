@@ -1,10 +1,10 @@
 # cheqd agent toolkit
 
-> ## ⚠️ DRAFT — scaffolding only
+> ## ⚠️ DRAFT — early exploration, not reviewed or stable
 >
-> **Nothing is implemented.** This repository currently contains build configuration and empty package boundaries. There is no functionality and the public API is not designed.
+> The core, A2A and AP2 bindings below are built and tested, including cross-language (TS/Python) conformance runs, a threat model and a fuzzing pass — but the public API is not frozen and may change completely.
 >
-> **Do not depend on this.** No package here is published, and all are marked private to prevent accidental release. Nothing has been security reviewed.
+> **Do not depend on this.** No package here is published, and all are marked private to prevent accidental release. Nothing has had an independent security review.
 >
 > This is an early exploration, not a cheqd product.
 
@@ -14,10 +14,10 @@ DID-anchored identity, delegation and per-request proof for agentic protocols.
 
 | Package | Responsibility | Status |
 |---|---|---|
-| [`@cheqd/agent-identity`](./packages/core) | DID resolution, reciprocal `did:web` ↔ `did:cheqd` linkage, DID-Linked Resource policy, credential status, key resolution | Not started |
-| [`@cheqd/agent-identity-a2a`](./packages/a2a) | A2A binding: client interceptor, server executor gate, canonical request shape | Not started |
+| [`@cheqd/agent-identity`](./packages/core) | DID resolution, reciprocal `did:web` ↔ `did:cheqd` linkage, DID-Linked Resource policy, credential status, key resolution | Built, draft |
+| [`@cheqd/agent-identity-a2a`](./packages/a2a) | A2A binding: client interceptor, server executor gate, canonical request shape | Built, draft |
 | [`@cheqd/agent-identity-ap2`](./packages/ap2) | AP2 binding: `cnf` key continuity, authorised-secondary-key tier, open/closed mandate chain verification | Single-hop case built, draft |
-| [`conformance/`](./conformance) | Shared vectors | Not started |
+| [`conformance/`](./conformance) | Shared vectors | Built |
 
 The two bindings both depend on the core and not on each other, so an AP2 consumer never installs the A2A SDK.
 

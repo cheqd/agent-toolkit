@@ -54,7 +54,7 @@ class CheqdStatusCheckerOptions:
 def create_cheqd_status_checker(options: CheqdStatusCheckerOptions) -> RevocationChecker:
     """Build a `RevocationChecker` that fails closed unless the fetched status list's
     `eddsa-jcs-2022` proof verifies against the pinned issuer's resolved `did:cheqd` key -
-    per spec §5.6 option 1, the proof-based alternative to ledger-anchoring-only trust.
+    per spec §5.6 option 2, the proof-based alternative to ledger-anchoring-only trust.
     """
     verify_status_list = create_status_list_proof_verifier(options.resolve_did_cheqd)
     return create_revocation_checker(
