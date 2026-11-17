@@ -12,7 +12,11 @@ const CANONICAL = 'did:web:server.example';
 const ANCHORED = 'did:cheqd:testnet:0c3581f0-011f-4263-b1ca-15ad70d54ede';
 
 test('an activation with nothing declared passes trivially', async () => {
-	const result = await verifyTrustExtension(CANONICAL, {}, { resolveDidDocument: async () => null, manifestCache: { get: async () => ({ ok: true }), clear() {} } });
+	const result = await verifyTrustExtension(
+		CANONICAL,
+		{},
+		{ resolveDidDocument: async () => null, manifestCache: { get: async () => ({ ok: true }), clear() {} } },
+	);
 	assert.deepEqual(result, { ok: true });
 });
 
@@ -21,7 +25,10 @@ test('reciprocal linkage is checked when anchoredDid is declared', async () => {
 		[CANONICAL]: { id: CANONICAL, alsoKnownAs: [ANCHORED] },
 		[ANCHORED]: { id: ANCHORED, alsoKnownAs: [CANONICAL] },
 	};
-	const deps = { resolveDidDocument: async (did) => docs[did] ?? null, manifestCache: { get: async () => ({ ok: true }), clear() {} } };
+	const deps = {
+		resolveDidDocument: async (did) => docs[did] ?? null,
+		manifestCache: { get: async () => ({ ok: true }), clear() {} },
+	};
 	const result = await verifyTrustExtension(CANONICAL, { anchoredDid: ANCHORED }, deps);
 	assert.deepEqual(result, { ok: true });
 });
@@ -31,7 +38,10 @@ test('a one-directional linkage claim fails closed', async () => {
 		[CANONICAL]: { id: CANONICAL, alsoKnownAs: [ANCHORED] },
 		[ANCHORED]: { id: ANCHORED, alsoKnownAs: [] },
 	};
-	const deps = { resolveDidDocument: async (did) => docs[did] ?? null, manifestCache: { get: async () => ({ ok: true }), clear() {} } };
+	const deps = {
+		resolveDidDocument: async (did) => docs[did] ?? null,
+		manifestCache: { get: async () => ({ ok: true }), clear() {} },
+	};
 	const result = await verifyTrustExtension(CANONICAL, { anchoredDid: ANCHORED }, deps);
 	assert.equal(result.ok, false);
 	assert.ok(result.reasons.some((r) => r.startsWith('linkage_')));
@@ -40,10 +50,13 @@ test('a one-directional linkage claim fails closed', async () => {
 test('a manifest resolution failure fails closed', async () => {
 	const ref = `${ANCHORED}?resourceName=TrustConfig&resourceType=TrustConfigManifest`;
 	const deps = {
-		resolveDidDocument: async () => ({ id: CANONICAL }),
+		// did-aware and reciprocal, so the (now-enforced) linkage checks pass trivially and the
+		// only failure surfacing is the manifest one this test is about.
+		resolveDidDocument: async (did) => ({ id: did, alsoKnownAs: [did === CANONICAL ? ANCHORED : CANONICAL] }),
 		manifestCache: { get: async () => ({ ok: false, reasons: ['resource_unavailable'] }), clear() {} },
 	};
-	const result = await verifyTrustExtension(CANONICAL, { trustConfigRef: ref }, deps);
+	// anchoredDid must be declared (and match the ref's did) now that trustConfigRef is bound to it.
+	const result = await verifyTrustExtension(CANONICAL, { anchoredDid: ANCHORED, trustConfigRef: ref }, deps);
 	assert.equal(result.ok, false);
 	assert.deepEqual(result.reasons, ['manifest_resource_unavailable']);
 });
@@ -52,7 +65,13 @@ test('a malformed trustConfigRef fails closed without calling the manifest cache
 	let called = false;
 	const deps = {
 		resolveDidDocument: async () => null,
-		manifestCache: { get: async () => { called = true; return { ok: true }; }, clear() {} },
+		manifestCache: {
+			get: async () => {
+				called = true;
+				return { ok: true };
+			},
+			clear() {},
+		},
 	};
 	const result = await verifyTrustExtension(CANONICAL, { trustConfigRef: 'not-a-ref' }, deps);
 	assert.equal(result.ok, false);
@@ -60,7 +79,10 @@ test('a malformed trustConfigRef fails closed without calling the manifest cache
 });
 
 test('statusCheck required fails closed when no checker is configured', async () => {
-	const deps = { resolveDidDocument: async () => null, manifestCache: { get: async () => ({ ok: true }), clear() {} } };
+	const deps = {
+		resolveDidDocument: async () => null,
+		manifestCache: { get: async () => ({ ok: true }), clear() {} },
+	};
 	const result = await verifyTrustExtension(CANONICAL, { statusCheck: 'required' }, deps);
 	assert.deepEqual(result, { ok: false, reasons: ['status_check_unavailable'] });
 });
@@ -89,12 +111,19 @@ test('createTrustExtensionCache serves a fresh entry without re-checking', async
 	let calls = 0;
 	const deps = {
 		resolveDidDocument: async () => null,
-		manifestCache: { get: async () => { calls++; return { ok: true }; }, clear() {} },
+		manifestCache: {
+			get: async () => {
+				calls++;
+				return { ok: true };
+			},
+			clear() {},
+		},
 	};
 	const ref = `${ANCHORED}?resourceName=TrustConfig&resourceType=TrustConfigManifest`;
 	const cache = createTrustExtensionCache(deps, { ttlMs: 60_000 });
-	await cache.get(CANONICAL, { trustConfigRef: ref });
-	await cache.get(CANONICAL, { trustConfigRef: ref });
+	// anchoredDid must match the ref's did now that trustConfigRef is bound to it.
+	await cache.get(CANONICAL, { anchoredDid: ANCHORED, trustConfigRef: ref });
+	await cache.get(CANONICAL, { anchoredDid: ANCHORED, trustConfigRef: ref });
 	assert.equal(calls, 1);
 });
 
@@ -103,13 +132,20 @@ test('createTrustExtensionCache re-checks once the TTL has elapsed', async () =>
 	let now = 0;
 	const deps = {
 		resolveDidDocument: async () => null,
-		manifestCache: { get: async () => { calls++; return { ok: true }; }, clear() {} },
+		manifestCache: {
+			get: async () => {
+				calls++;
+				return { ok: true };
+			},
+			clear() {},
+		},
 	};
 	const ref = `${ANCHORED}?resourceName=TrustConfig&resourceType=TrustConfigManifest`;
 	const cache = createTrustExtensionCache(deps, { ttlMs: 1000, now: () => now });
-	await cache.get(CANONICAL, { trustConfigRef: ref });
+	// anchoredDid must match the ref's did now that trustConfigRef is bound to it.
+	await cache.get(CANONICAL, { anchoredDid: ANCHORED, trustConfigRef: ref });
 	now = 1001;
-	await cache.get(CANONICAL, { trustConfigRef: ref });
+	await cache.get(CANONICAL, { anchoredDid: ANCHORED, trustConfigRef: ref });
 	assert.equal(calls, 2);
 });
 
@@ -169,7 +205,8 @@ test('a full discovery flow - real linkage check, real manifest resolution, stat
 		},
 	};
 	const fetchManifest = async (url) => {
-		if (url.includes('resourceMetadata=true')) return { status: 200, body: Buffer.from(JSON.stringify(manifestMeta)) };
+		if (url.includes('resourceMetadata=true'))
+			return { status: 200, body: Buffer.from(JSON.stringify(manifestMeta)) };
 		if (url.includes('/resources/')) return { status: 200, body: manifestBytes };
 		return { status: 404, body: new Uint8Array() };
 	};
@@ -235,7 +272,8 @@ test('the same real flow fails closed when the manifest checksum does not match 
 		},
 	};
 	const fetchManifest = async (url) => {
-		if (url.includes('resourceMetadata=true')) return { status: 200, body: Buffer.from(JSON.stringify(manifestMeta)) };
+		if (url.includes('resourceMetadata=true'))
+			return { status: 200, body: Buffer.from(JSON.stringify(manifestMeta)) };
 		if (url.includes('/resources/')) return { status: 200, body: manifestBytes };
 		return { status: 404, body: new Uint8Array() };
 	};
@@ -255,10 +293,105 @@ test('the same real flow fails closed when the manifest checksum does not match 
 
 	const result = await verifyTrustExtension(
 		CANONICAL,
-		{ anchoredDid: ANCHORED, trustConfigRef: `${ANCHORED}?resourceName=trust-config&resourceType=TrustConfigManifest`, statusCheck: 'required' },
+		{
+			anchoredDid: ANCHORED,
+			trustConfigRef: `${ANCHORED}?resourceName=trust-config&resourceType=TrustConfigManifest`,
+			statusCheck: 'required',
+		},
 		deps,
 	);
 
 	assert.equal(result.ok, false);
 	assert.ok(result.reasons.some((r) => r.includes('checksum')));
+});
+
+// Regression: verifyTrustExtension used to trust `resolveDidDocument`'s result purely on the
+// basis that SOMETHING resolved - verifyReciprocalLinkage only compares the two returned
+// documents against each other, never against the DIDs actually requested. A lax/generic
+// resolver (e.g. over did:web, unlike core's own did:cheqd resolver which binds the id itself)
+// could return a document whose `id` names the OTHER party's DID - e.g. an attacker's did:web
+// document declaring `id: <victim's anchored DID>` - and inherit that victim's linkage. Each
+// resolved document's own `id` must equal the DID this module actually asked for.
+test('a resolved document whose id does not match the requested DID fails closed, even with otherwise-valid reciprocal alsoKnownAs', async () => {
+	const ATTACKER_CANONICAL = 'did:web:attacker.example';
+	// The attacker's resolver returns a document claiming the VICTIM's canonical DID as its own
+	// id, with alsoKnownAs pointing at ANCHORED - reciprocal with ANCHORED's own document, so
+	// verifyReciprocalLinkage alone would accept this.
+	const docs = {
+		[ATTACKER_CANONICAL]: { id: CANONICAL, alsoKnownAs: [ANCHORED] },
+		[ANCHORED]: { id: ANCHORED, alsoKnownAs: [CANONICAL] },
+	};
+	const deps = {
+		resolveDidDocument: async (did) => docs[did] ?? null,
+		manifestCache: { get: async () => ({ ok: true }), clear() {} },
+	};
+	const result = await verifyTrustExtension(ATTACKER_CANONICAL, { anchoredDid: ANCHORED }, deps);
+	assert.equal(result.ok, false);
+	assert.ok(result.reasons.includes('linkage_resolved_doc_id_mismatch'));
+});
+
+test('a resolved anchored document whose id does not match activation.anchoredDid fails closed', async () => {
+	const docs = {
+		[CANONICAL]: { id: CANONICAL, alsoKnownAs: [ANCHORED] },
+		// Resolver answers for ANCHORED's DID but hands back a document claiming to be some
+		// other DID entirely.
+		[ANCHORED]: { id: 'did:cheqd:testnet:00000000-0000-0000-0000-000000000000', alsoKnownAs: [CANONICAL] },
+	};
+	const deps = {
+		resolveDidDocument: async (did) => docs[did] ?? null,
+		manifestCache: { get: async () => ({ ok: true }), clear() {} },
+	};
+	const result = await verifyTrustExtension(CANONICAL, { anchoredDid: ANCHORED }, deps);
+	assert.equal(result.ok, false);
+	assert.ok(result.reasons.includes('linkage_resolved_doc_id_mismatch'));
+});
+
+// Regression: the manifest check only verified that `trustConfigRef`'s did:cheqd resolved with
+// a matching checksum - never that it belonged to the right DID. An attacker who is not
+// `ANCHORED` at all could declare a `trustConfigRef` pointing at a third-party DID's
+// perfectly-valid manifest and have it accepted as if it were the caller's own trust config.
+test('a trustConfigRef pointing at a DID other than anchoredDid fails closed without calling the manifest cache', async () => {
+	const OTHER_DID = 'did:cheqd:testnet:11111111-1111-1111-1111-111111111111';
+	const ref = `${OTHER_DID}?resourceName=TrustConfig&resourceType=TrustConfigManifest`;
+	let called = false;
+	const deps = {
+		resolveDidDocument: async (did) => ({ id: did, alsoKnownAs: [did === CANONICAL ? ANCHORED : CANONICAL] }),
+		manifestCache: {
+			get: async () => {
+				called = true;
+				return { ok: true };
+			},
+			clear() {},
+		},
+	};
+	const result = await verifyTrustExtension(CANONICAL, { anchoredDid: ANCHORED, trustConfigRef: ref }, deps);
+	assert.equal(result.ok, false);
+	assert.ok(result.reasons.includes('manifest_did_mismatch'));
+	assert.equal(called, false);
+});
+
+// Same binding, no anchoredDid declared: the manifest must then belong to the canonical DID
+// itself (there is no other DID this check is being run for).
+test('a trustConfigRef pointing at a DID other than canonicalDid fails closed when anchoredDid is not declared', async () => {
+	const OTHER_DID = 'did:cheqd:testnet:22222222-2222-2222-2222-222222222222';
+	const ref = `${OTHER_DID}?resourceName=TrustConfig&resourceType=TrustConfigManifest`;
+	let called = false;
+	const deps = {
+		resolveDidDocument: async () => null,
+		manifestCache: {
+			get: async () => {
+				called = true;
+				return { ok: true };
+			},
+			clear() {},
+		},
+	};
+	const result = await verifyTrustExtension(
+		'did:cheqd:testnet:0000000000000000aaaaaaaaaaaaaaaa',
+		{ trustConfigRef: ref },
+		deps,
+	);
+	assert.equal(result.ok, false);
+	assert.ok(result.reasons.includes('manifest_did_mismatch'));
+	assert.equal(called, false);
 });

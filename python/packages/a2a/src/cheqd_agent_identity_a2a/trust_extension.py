@@ -29,7 +29,27 @@ _MANIFEST_KINDS = {"TrustConfigManifest", "CapabilityManifest", "ConformanceMani
 
 @dataclass(frozen=True)
 class TrustExtensionActivation:
-    """The trust extension's activation params, per spec §5.1."""
+    """The trust extension's activation params, per spec §5.1.
+
+    Design note (per-deployment vs. per-caller): in this codebase, a single `activation` value
+    is constructed once per deployment and shared across every caller - the TS side's
+    equivalent (`TrustExtensionGate` in wrapper.ts) always calls
+    `cache.get(user.verified.did, trust_extension.activation)` with the SAME `activation`
+    object regardless of which caller is being checked. `anchored_did`'s own doc comment below
+    calls it "the caller's claimed anchored DID", which reads as per-caller, but nothing here
+    actually varies `activation` by caller: every caller passing through one gate is checked
+    against the exact same `anchored_did` and `trust_config_ref`. That is fine for a deployment
+    fronting a single agent identity, but it is a latent mismatch between what the field is
+    documented to mean and how it is actually wired. If an integrator "fixes" the apparent
+    per-caller framing by building a fresh `TrustExtensionActivation` per request from
+    caller-supplied data (e.g. a request header naming the caller's own anchored DID), the
+    resolved-document-id binding and trust_config_ref-to-anchored_did binding enforced below
+    become the ONLY thing stopping a caller from pointing this module at an arbitrary anchored
+    DID and trust-config manifest of their own choosing - do not build a per-request
+    `activation` from caller-supplied fields; derive `anchored_did` only from something already
+    cryptographically bound to the caller (e.g. the caller's own verified DID's linked
+    documents), never from a client-asserted value.
+    """
 
     anchored_did: Optional[str] = None
     """The caller's claimed anchored `did:cheqd`, if any. Reciprocal linkage is required when
@@ -111,6 +131,15 @@ async def verify_trust_extension(
         )
         if not canonical_doc or not anchored_doc:
             reasons.append("linkage_resolution_failed")
+        elif canonical_doc.id != canonical_did or anchored_doc.id != activation.anchored_did:
+            # Bind every resolved document to the DID we actually asked for, immediately after
+            # resolving it - `resolve_did_document` is an injected seam with no id-binding
+            # contract enforced by this module itself. Without this, a lax/generic resolver
+            # (e.g. over did:web) could return a document whose own `id` names the OTHER
+            # party's DID, and `verify_reciprocal_linkage` - which only compares the two
+            # documents against each other, never against what was actually requested - would
+            # be none the wiser.
+            reasons.append("linkage_resolved_doc_id_mismatch")
         else:
             linkage = verify_reciprocal_linkage(canonical_doc, anchored_doc)
             if not linkage.ok:
@@ -120,6 +149,15 @@ async def verify_trust_extension(
         parsed = _parse_resource_ref(activation.trust_config_ref)
         if parsed is None:
             reasons.append("malformed_trust_config_ref")
+        elif parsed.did != (activation.anchored_did or canonical_did):
+            # The manifest must belong to the DID this check is actually being run for - the
+            # caller's claimed anchored DID when declared, else the canonical DID itself.
+            # Without this, a valid, correctly-checksummed manifest belonging to ANY did:cheqd
+            # (not necessarily the caller's) would be accepted merely because it resolves and
+            # its checksum matches - the manifest resolver's own collection-id binding only
+            # proves the manifest belongs to `parsed.did`, never that `parsed.did` is the right
+            # DID.
+            reasons.append("manifest_did_mismatch")
         else:
             manifest = await deps.manifest_cache.get(parsed.did, parsed.kind, parsed.resource_name)
             if not manifest.ok:
@@ -137,6 +175,7 @@ async def verify_trust_extension(
 
 
 _DEFAULT_TTL_MS = 5 * 60_000
+_DEFAULT_MAX_ENTRIES = 10_000
 
 
 @dataclass(frozen=True)
@@ -149,6 +188,15 @@ class TrustExtensionCache:
     """TTL-bounded cache over `verify_trust_extension`, so a verified DID's trust-extension
     checks are refreshed on a timer, not re-run against resolvers and manifests on every
     request the gate verifies (spec §5.5: never per call).
+
+    Also size-bounded via `max_entries` (default 10,000, matching the TS port's
+    `createTrustExtensionCache` - see PR #36). The cache key is derived from the caller's own
+    verified DID, but minting a new DID is cheap (one keypair), and every lookup caches its
+    result regardless of outcome - a caller presenting a fresh self-asserted DID on every
+    request, which fails the trust check every time, would otherwise grow this dict forever.
+    Once the cap is hit, the oldest entry (by insertion order, which a plain `dict` preserves in
+    Python 3.7+) is evicted to make room - not a full LRU, but enough to bound memory under
+    sustained churn without adding a dependency.
     """
 
     def __init__(
@@ -156,10 +204,12 @@ class TrustExtensionCache:
         deps: TrustExtensionDeps,
         *,
         ttl_ms: int = _DEFAULT_TTL_MS,
+        max_entries: int = _DEFAULT_MAX_ENTRIES,
         now: Callable[[], float] = lambda: datetime.now(timezone.utc).timestamp() * 1000,
     ) -> None:
         self._deps = deps
         self._ttl_ms = ttl_ms
+        self._max_entries = max_entries
         self._now = now
         self._cache: dict[str, _CacheEntry] = {}
 
@@ -170,17 +220,34 @@ class TrustExtensionCache:
         if cached is not None and cached.expires_at > now:
             return cached.result
         result = await verify_trust_extension(canonical_did, activation, self._deps)
+        # A fresh lookup for an existing key must not grow the entry count, so evict (if needed)
+        # only when this key is new - otherwise a cache at exactly max_entries would evict one
+        # entry on every refresh of an already-tracked DID for no reason.
+        if key not in self._cache and len(self._cache) >= self._max_entries:
+            oldest = next(iter(self._cache), None)
+            if oldest is not None:
+                del self._cache[oldest]
         self._cache[key] = _CacheEntry(result=result, expires_at=now + self._ttl_ms)
         return result
 
     def clear(self) -> None:
         self._cache.clear()
 
+    def size(self) -> int:
+        """Current number of cached entries. Exposed for tests/observability, not part of the
+        trust decision.
+        """
+        return len(self._cache)
+
 
 def create_trust_extension_cache(
-    deps: TrustExtensionDeps, *, ttl_ms: int = _DEFAULT_TTL_MS, now: Optional[Callable[[], float]] = None
+    deps: TrustExtensionDeps,
+    *,
+    ttl_ms: int = _DEFAULT_TTL_MS,
+    max_entries: int = _DEFAULT_MAX_ENTRIES,
+    now: Optional[Callable[[], float]] = None,
 ) -> TrustExtensionCache:
-    kwargs = {"ttl_ms": ttl_ms}
+    kwargs = {"ttl_ms": ttl_ms, "max_entries": max_entries}
     if now is not None:
         kwargs["now"] = now
     return TrustExtensionCache(deps, **kwargs)
