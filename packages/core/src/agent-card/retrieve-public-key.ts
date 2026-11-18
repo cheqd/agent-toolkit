@@ -54,6 +54,13 @@ export interface MinimalDidDocument {
 	 * Not read by this module's own `kid`-based Agent Card key resolution.
 	 */
 	readonly assertionMethod?: readonly (string | MinimalVerificationMethod)[];
+	/**
+	 * The DID's resolution metadata says it is deactivated. A deactivated DID still resolves, so
+	 * callers can show it as deactivated rather than as unknown, but none of its keys verify
+	 * anything: {@link keyFromDocument} and {@link assertionMethodKeyFromDocument} refuse it with
+	 * `did_deactivated`.
+	 */
+	readonly deactivated?: boolean;
 }
 
 export interface MinimalVerificationMethod {
@@ -80,7 +87,11 @@ export interface RetrievePublicKeyOptions {
 	 * no hard dependency on a particular HTTP stack, and so tests never hit the network. */
 	fetchDidWebDocument?: (url: string) => Promise<{ status: number; json(): Promise<unknown> }>;
 	/** Opt-in `did:cheqd` resolution. Omit to reject every `did:cheqd` `kid` (fail-closed default -
-	 * this module does not assume a trusted cheqd resolver endpoint on the caller's behalf). */
+	 * this module does not assume a trusted cheqd resolver endpoint on the caller's behalf).
+	 * For a deactivated DID, return its document with `deactivated: true`, so its keys are
+	 * refused with `did_deactivated`. `createDidCheqdResolver` does this; a custom resolver (for
+	 * example one backed by a Credo agent's `DidsApi`) must copy
+	 * `didDocumentMetadata.deactivated` onto the document itself. */
 	resolveDidCheqd?: (did: string) => Promise<MinimalDidDocument | null>;
 	/** Milliseconds to wait for a `did:web` fetch (default or injected) before giving up.
 	 * Default 5000. */
@@ -185,6 +196,7 @@ async function readBoundedText(response: Response, maxBytes: number): Promise<st
  * (e.g. `@cheqd/agent-identity-ap2`'s generic DataIntegrityProof verifier) - avoids re-deriving
  * the same publicKeyJwk/Multibase/Base58 dispatch logic a second time. */
 export function keyFromDocument(document: MinimalDidDocument, kid: string): PublicKeyJwk {
+	if (document.deactivated === true) fail('did_deactivated');
 	const method = (document.verificationMethod ?? []).find(
 		(candidate) => methodId(candidate, document.id) === kid,
 	);
@@ -216,6 +228,7 @@ function methodId(method: MinimalVerificationMethod, did: string): string {
  * key resolution, which has no such relationship requirement to begin with.
  */
 export function assertionMethodKeyFromDocument(document: MinimalDidDocument, kid: string): PublicKeyJwk {
+	if (document.deactivated === true) fail('did_deactivated');
 	const relationship = document.assertionMethod ?? [];
 	const matched = relationship.find((entry) =>
 		typeof entry === 'string'

@@ -157,3 +157,44 @@ async def test_wired_into_create_retrieve_public_key_a_did_cheqd_resolver_failur
     retrieve = create_retrieve_public_key(resolve_did_cheqd=resolve_did_cheqd)
     with pytest.raises(KeyResolutionError):
         await retrieve(KID, None)
+
+
+async def test_a_deactivated_did_still_resolves_flagged_and_none_of_its_keys_verify():
+    async def fetch(_url):
+        return json_response(
+            200,
+            {
+                "didDocument": {
+                    "id": DID,
+                    "verificationMethod": [
+                        {"id": KID, "publicKeyJwk": {"kty": "OKP", "crv": "Ed25519", "x": "abc"}}
+                    ],
+                },
+                "didDocumentMetadata": {"deactivated": True},
+            },
+        )
+
+    resolve = create_did_cheqd_resolver(resolver_url=BASE, fetch=fetch)
+    doc = await resolve(DID)
+    assert doc.id == DID
+    assert doc.deactivated is True
+    assert doc.verification_method[0].id == KID
+    retrieve = create_retrieve_public_key(resolve_did_cheqd=resolve)
+    with pytest.raises(KeyResolutionError, match="did_deactivated"):
+        await retrieve(KID)
+
+
+async def test_a_did_whose_metadata_says_not_deactivated_still_resolves():
+    async def fetch(_url):
+        return json_response(
+            200,
+            {
+                "didDocument": {"id": DID, "verificationMethod": []},
+                "didDocumentMetadata": {"deactivated": False},
+            },
+        )
+
+    resolve = create_did_cheqd_resolver(resolver_url=BASE, fetch=fetch)
+    doc = await resolve(DID)
+    assert doc.id == DID
+    assert doc.deactivated is False

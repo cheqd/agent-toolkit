@@ -74,3 +74,25 @@ test('fails closed when the resolver does not know the issuer DID', async () => 
 	const result = await checker(fixture.entries.revokedIndex0);
 	assert.equal(result.revoked, true);
 });
+
+test('fails closed when the issuer DID is deactivated, even though its document still resolves', async () => {
+	const fetch = async (url) =>
+		url === fixture.credential.id
+			? { ok: true, status: 200, json: async () => fixture.credential }
+			: { ok: false, status: 404, json: async () => ({}) };
+	const resolveDidCheqd = async (did) =>
+		did === fixture.did
+			? {
+					id: fixture.did,
+					verificationMethod: [
+						{ id: fixture.kid, type: 'JsonWebKey2020', controller: fixture.did, publicKeyJwk: fixture.publicKeyJwk },
+					],
+					assertionMethod: [fixture.kid],
+					deactivated: true,
+				}
+			: null;
+	const checker = createCheqdStatusChecker({ resolveDidCheqd, fetch });
+	// The clear index would read as not revoked if the deactivated issuer's key were accepted
+	const result = await checker(fixture.entries.clearIndex1, { credentialIssuer: fixture.credential.issuer });
+	assert.equal(result.revoked, true);
+});
