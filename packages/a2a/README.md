@@ -36,7 +36,7 @@ A2A binding: a request/response proof gate for `@a2a-js/sdk`, and the matching c
   shows both paths produce byte-identical Ed25519 signatures that the SDK's
   `verifyAgentCardSignature` accepts. Verification is the SDK's `verifyAgentCardSignature` with
   `@cheqd/agent-identity`'s `createRetrievePublicKey` (pass `expectedDid`), whose
-  `createDidCheqdResolver` refuses deactivated DIDs. This is the only agent-card implementation:
+  `createDidCheqdResolver` returns a deactivated DID flagged `deactivated`, whose keys are refused (`did_deactivated`). This is the only agent-card implementation:
   the equivalent helpers in the `cheqd/credo-ts` fork's `packages/cheqd/src/agent-id/` were moved
   here and removed from there.
 - `evidence/` — the research scripts behind all of this, runnable against real
