@@ -97,3 +97,22 @@ test('wired into createRetrievePublicKey: a did:cheqd resolver failure is reject
 	const retrieve = createRetrievePublicKey({ resolveDidCheqd });
 	await assert.rejects(() => retrieve(KID));
 });
+
+test('a deactivated DID resolves to null, so none of its keys verify', async () => {
+	const fetch = async () =>
+		jsonResponse(200, {
+			didDocument: { id: DID, verificationMethod: [{ id: KID, publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: 'abc' } }] },
+			didDocumentMetadata: { deactivated: true },
+		});
+	const resolveDidCheqd = createDidCheqdResolver({ resolverUrl: BASE, fetch });
+	assert.equal(await resolveDidCheqd(DID), null);
+	const retrieve = createRetrievePublicKey({ resolveDidCheqd });
+	await assert.rejects(retrieve(KID), /did_cheqd_unresolvable/);
+});
+
+test('a DID whose metadata says deactivated: false still resolves', async () => {
+	const fetch = async () =>
+		jsonResponse(200, { didDocument: { id: DID, verificationMethod: [] }, didDocumentMetadata: { deactivated: false } });
+	const resolve = createDidCheqdResolver({ resolverUrl: BASE, fetch });
+	assert.equal((await resolve(DID)).id, DID);
+});

@@ -28,12 +28,17 @@ A2A binding: a request/response proof gate for `@a2a-js/sdk`, and the matching c
   (accepted when checks pass, rejected with the executor never running when they don't) and
   `test/trust-extension.test.mjs` for the module in isolation.
 - `src/client.ts` — the client-side `CallInterceptor`.
-- `src/agent-card-signature.ts` — `signAgentCard`, a DID-anchored Agent Card signer over
-  `@a2a-js/sdk`'s own `generateAgentCardSignature` (never a reimplementation of the JWS
-  construction — see the findings doc §4). Moved here from the `cheqd/credo-ts` fork's
-  `packages/cheqd/src/agent-id/agentCardSignature.ts`, which built an equivalent helper against
-  Credo's own key APIs because this package wasn't published anywhere a Credo-based agent could
-  depend on it instead.
+- `src/agent-card-signature.ts` — `signAgentCard`, a DID-anchored Agent Card signer. Takes
+  either a `privateJwk` (signed by `@a2a-js/sdk`'s own `generateAgentCardSignature` — see the
+  findings doc §4) or a `signer` for a key that never leaves its KMS, HSM or agent framework (a
+  Credo agent's `Kms.KeyManagementApi`, say): the JWS is then assembled over the SDK's own
+  `canonicalizeAgentCard` payload, in the same form, and `test/agent-card-signature.test.mjs`
+  shows both paths produce byte-identical Ed25519 signatures that the SDK's
+  `verifyAgentCardSignature` accepts. Verification is the SDK's `verifyAgentCardSignature` with
+  `@cheqd/agent-identity`'s `createRetrievePublicKey` (pass `expectedDid`), whose
+  `createDidCheqdResolver` refuses deactivated DIDs. This is the only agent-card implementation:
+  the equivalent helpers in the `cheqd/credo-ts` fork's `packages/cheqd/src/agent-id/` were moved
+  here and removed from there.
 - `evidence/` — the research scripts behind all of this, runnable against real
   `@a2a-js/sdk` and `@kya-os/mcp`.
 - `smoke-test.mjs`, `smoke-test-rest.mjs`, `smoke-test-grpc.mjs`, `smoke-test-agent-card.mjs`,

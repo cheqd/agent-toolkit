@@ -48,8 +48,15 @@ def create_did_cheqd_resolver(
     fetch: Optional[DidCheqdFetch] = None,
 ) -> Callable[[str], Awaitable[Optional[MinimalDidDocument]]]:
     """Build a `resolve_did_cheqd(did)` callback. Fails closed - returns `None`, never raises
-    past its own boundary - on a non-200 response, invalid JSON, a document with no `id`, or a
-    document whose `id` does not match the DID actually requested.
+    past its own boundary - on a non-200 response, invalid JSON, a document with no `id`, a
+    document whose `id` does not match the DID actually requested, or a DID whose resolution
+    metadata says it is deactivated.
+
+    A deactivated DID's document is still served by the resolver (its keys stay published, with
+    `didDocumentMetadata.deactivated: true`), so without this check every key of a DID its
+    controller has deliberately retired would go on verifying signatures. A raw DID document
+    (no Resolution Result wrapper) carries no metadata, so deactivation cannot be detected in
+    that shape - point `resolver_url` at an endpoint that returns Resolution Results.
     """
     do_fetch = fetch or _default_fetch
     base = resolver_url.rstrip("/")
@@ -72,6 +79,9 @@ def create_did_cheqd_resolver(
         except Exception:
             return None
         if not isinstance(body, dict):
+            return None
+        metadata = body.get("didDocumentMetadata")
+        if isinstance(metadata, dict) and metadata.get("deactivated") is True:
             return None
         # Universal Resolver shape, or a raw DID document - read whichever is present.
         candidate = body["didDocument"] if isinstance(body.get("didDocument"), dict) else body

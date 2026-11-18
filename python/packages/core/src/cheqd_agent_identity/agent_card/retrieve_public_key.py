@@ -177,6 +177,10 @@ def create_retrieve_public_key(
 ) -> Callable[[str, Optional[str]], Awaitable[PublicKeyJwk]]:
     """Build a `retrieve_public_key(kid, jku)` callback. `jku` is accepted for shape
     compatibility and never read.
+
+    `resolve_did_cheqd` must return `None` for a DID that is deactivated, not its last
+    document: the keys of a deactivated DID must not verify anything. `create_did_cheqd_resolver`
+    does this; a custom resolver must check `didDocumentMetadata.deactivated` itself.
     """
     fetch_did_web = fetch_did_web_document or _default_fetch_did_web(did_web_max_response_bytes)
 

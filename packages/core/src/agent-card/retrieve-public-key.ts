@@ -80,7 +80,11 @@ export interface RetrievePublicKeyOptions {
 	 * no hard dependency on a particular HTTP stack, and so tests never hit the network. */
 	fetchDidWebDocument?: (url: string) => Promise<{ status: number; json(): Promise<unknown> }>;
 	/** Opt-in `did:cheqd` resolution. Omit to reject every `did:cheqd` `kid` (fail-closed default -
-	 * this module does not assume a trusted cheqd resolver endpoint on the caller's behalf). */
+	 * this module does not assume a trusted cheqd resolver endpoint on the caller's behalf).
+	 * Must return `null` for a DID that is deactivated, not its last document: the keys of a
+	 * deactivated DID must not verify anything. `createDidCheqdResolver` does this; a custom
+	 * resolver (for example one backed by a Credo agent's `DidsApi`) must check
+	 * `didDocumentMetadata.deactivated` itself. */
 	resolveDidCheqd?: (did: string) => Promise<MinimalDidDocument | null>;
 	/** Milliseconds to wait for a `did:web` fetch (default or injected) before giving up.
 	 * Default 5000. */
