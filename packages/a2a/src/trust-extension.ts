@@ -110,6 +110,8 @@ export async function verifyTrustExtension(
 			// `verifyReciprocalLinkage` - which only compares the two documents against each
 			// other, never against what was actually requested - would be none the wiser.
 			reasons.push('linkage_resolved_doc_id_mismatch');
+		} else if (canonicalDoc.deactivated === true || anchoredDoc.deactivated === true) {
+			reasons.push('linkage_did_deactivated');
 		} else {
 			const linkage = verifyReciprocalLinkage(canonicalDoc, anchoredDoc);
 			if (!linkage.ok) reasons.push(...linkage.reasons.map((r) => `linkage_${r}`));

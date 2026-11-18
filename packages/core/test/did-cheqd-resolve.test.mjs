@@ -98,21 +98,26 @@ test('wired into createRetrievePublicKey: a did:cheqd resolver failure is reject
 	await assert.rejects(() => retrieve(KID));
 });
 
-test('a deactivated DID resolves to null, so none of its keys verify', async () => {
+test('a deactivated DID still resolves, flagged deactivated, and none of its keys verify', async () => {
 	const fetch = async () =>
 		jsonResponse(200, {
 			didDocument: { id: DID, verificationMethod: [{ id: KID, publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: 'abc' } }] },
 			didDocumentMetadata: { deactivated: true },
 		});
 	const resolveDidCheqd = createDidCheqdResolver({ resolverUrl: BASE, fetch });
-	assert.equal(await resolveDidCheqd(DID), null);
+	const doc = await resolveDidCheqd(DID);
+	assert.equal(doc.id, DID);
+	assert.equal(doc.deactivated, true);
+	assert.equal(doc.verificationMethod[0].id, KID);
 	const retrieve = createRetrievePublicKey({ resolveDidCheqd });
-	await assert.rejects(retrieve(KID), /did_cheqd_unresolvable/);
+	await assert.rejects(retrieve(KID), /did_deactivated/);
 });
 
 test('a DID whose metadata says deactivated: false still resolves', async () => {
 	const fetch = async () =>
 		jsonResponse(200, { didDocument: { id: DID, verificationMethod: [] }, didDocumentMetadata: { deactivated: false } });
 	const resolve = createDidCheqdResolver({ resolverUrl: BASE, fetch });
-	assert.equal((await resolve(DID)).id, DID);
+	const doc = await resolve(DID);
+	assert.equal(doc.id, DID);
+	assert.equal(doc.deactivated, undefined);
 });

@@ -30,15 +30,14 @@ export interface DidCheqdResolverOptions {
 
 /**
  * Build a `resolveDidCheqd(did)` callback. Fails closed - returns `null`, never throws past its
- * own boundary - on a non-200 response, invalid JSON, a document with no `id`, a document
- * whose `id` does not match the DID actually requested, or a DID whose resolution metadata
- * says it is deactivated.
+ * own boundary - on a non-200 response, invalid JSON, a document with no `id`, or a document
+ * whose `id` does not match the DID actually requested.
  *
- * A deactivated DID's document is still served by the resolver (its keys stay published, with
- * `didDocumentMetadata.deactivated: true`), so without this check every key of a DID its
- * controller has deliberately retired would go on verifying signatures. A raw DID document
- * (no Resolution Result wrapper) carries no metadata, so deactivation cannot be detected in
- * that shape - point `resolverUrl` at an endpoint that returns Resolution Results.
+ * A deactivated DID is returned with `deactivated: true`, so it can be shown as deactivated
+ * rather than as unknown. Its keys stay published in the document, so the flag is what stops
+ * them verifying: the key lookups refuse a flagged document with `did_deactivated`. A raw DID
+ * document (no Resolution Result wrapper) carries no metadata, so deactivation cannot be
+ * detected in that shape - point `resolverUrl` at an endpoint that returns Resolution Results.
  */
 export function createDidCheqdResolver(options: DidCheqdResolverOptions): (did: string) => Promise<MinimalDidDocument | null> {
 	const doFetch = options.fetch ?? ((url: string) => fetch(url));
@@ -63,11 +62,11 @@ export function createDidCheqdResolver(options: DidCheqdResolverOptions): (did: 
 			return null;
 		}
 		if (!isRecord(body)) return null;
-		if (isRecord(body.didDocumentMetadata) && body.didDocumentMetadata.deactivated === true) return null;
 		// Universal Resolver shape, or a raw DID document - read whichever is present.
 		const candidate = isRecord(body.didDocument) ? body.didDocument : body;
 		if (!isMinimalDidDocument(candidate) || candidate.id !== did) return null;
-		return candidate;
+		const deactivated = isRecord(body.didDocumentMetadata) && body.didDocumentMetadata.deactivated === true;
+		return deactivated ? { ...candidate, deactivated: true } : candidate;
 	};
 }
 

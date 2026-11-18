@@ -13,6 +13,7 @@ SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from typing import Any, Awaitable, Callable, Optional, Protocol
 
@@ -48,15 +49,14 @@ def create_did_cheqd_resolver(
     fetch: Optional[DidCheqdFetch] = None,
 ) -> Callable[[str], Awaitable[Optional[MinimalDidDocument]]]:
     """Build a `resolve_did_cheqd(did)` callback. Fails closed - returns `None`, never raises
-    past its own boundary - on a non-200 response, invalid JSON, a document with no `id`, a
-    document whose `id` does not match the DID actually requested, or a DID whose resolution
-    metadata says it is deactivated.
+    past its own boundary - on a non-200 response, invalid JSON, a document with no `id`, or a
+    document whose `id` does not match the DID actually requested.
 
-    A deactivated DID's document is still served by the resolver (its keys stay published, with
-    `didDocumentMetadata.deactivated: true`), so without this check every key of a DID its
-    controller has deliberately retired would go on verifying signatures. A raw DID document
-    (no Resolution Result wrapper) carries no metadata, so deactivation cannot be detected in
-    that shape - point `resolver_url` at an endpoint that returns Resolution Results.
+    A deactivated DID is returned with `deactivated=True`, so it can be shown as deactivated
+    rather than as unknown. Its keys stay published in the document, so the flag is what stops
+    them verifying: the key lookups refuse a flagged document with `did_deactivated`. A raw DID
+    document (no Resolution Result wrapper) carries no metadata, so deactivation cannot be
+    detected in that shape - point `resolver_url` at an endpoint that returns Resolution Results.
     """
     do_fetch = fetch or _default_fetch
     base = resolver_url.rstrip("/")
@@ -80,14 +80,14 @@ def create_did_cheqd_resolver(
             return None
         if not isinstance(body, dict):
             return None
-        metadata = body.get("didDocumentMetadata")
-        if isinstance(metadata, dict) and metadata.get("deactivated") is True:
-            return None
         # Universal Resolver shape, or a raw DID document - read whichever is present.
         candidate = body["didDocument"] if isinstance(body.get("didDocument"), dict) else body
         document = _parse_minimal_did_document(candidate)
         if document is None or document.id != did:
             return None
+        metadata = body.get("didDocumentMetadata")
+        if isinstance(metadata, dict) and metadata.get("deactivated") is True:
+            return dataclasses.replace(document, deactivated=True)
         return document
 
     return resolve_did_cheqd

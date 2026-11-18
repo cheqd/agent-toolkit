@@ -21,6 +21,8 @@ from typing import Optional, Sequence, Union
 class LinkageDidDocument:
     id: str
     also_known_as: Optional[Sequence[str]] = field(default=None)
+    # A deactivated DID links nothing; the trust extension refuses it as `did_deactivated`.
+    deactivated: bool = False
 
 
 @dataclass(frozen=True)

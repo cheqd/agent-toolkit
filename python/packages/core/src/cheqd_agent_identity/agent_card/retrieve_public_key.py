@@ -124,6 +124,10 @@ class MinimalDidDocument:
     # Ids (or embedded methods) of keys this DID actually signs with. Not read by this module's
     # own kid-based Agent Card key resolution.
     assertion_method: Sequence[Union[str, MinimalVerificationMethod]] = field(default_factory=tuple)
+    # The DID's resolution metadata says it is deactivated. It still resolves, so callers can show
+    # it as deactivated rather than as unknown, but key_from_document and
+    # assertion_method_key_from_document refuse it with `did_deactivated`.
+    deactivated: bool = False
 
 
 class DidWebResponse(Protocol):
@@ -178,9 +182,9 @@ def create_retrieve_public_key(
     """Build a `retrieve_public_key(kid, jku)` callback. `jku` is accepted for shape
     compatibility and never read.
 
-    `resolve_did_cheqd` must return `None` for a DID that is deactivated, not its last
-    document: the keys of a deactivated DID must not verify anything. `create_did_cheqd_resolver`
-    does this; a custom resolver must check `didDocumentMetadata.deactivated` itself.
+    For a deactivated DID, `resolve_did_cheqd` must return its document with `deactivated=True`,
+    so its keys are refused with `did_deactivated`. `create_did_cheqd_resolver` does this; a
+    custom resolver must copy `didDocumentMetadata.deactivated` onto the document itself.
     """
     fetch_did_web = fetch_did_web_document or _default_fetch_did_web(did_web_max_response_bytes)
 
@@ -212,6 +216,8 @@ def key_from_document(document: MinimalDidDocument, kid: str) -> PublicKeyJwk:
     """Exported for reuse by other modules that already hold a resolved DID document and a
     `kid` (e.g. the AP2 package's generic DataIntegrityProof verifier).
     """
+    if document.deactivated:
+        _fail("did_deactivated")
     method = next(
         (m for m in document.verification_method if _method_id(m, document.id) == kid),
         None,
@@ -242,6 +248,8 @@ def assertion_method_key_from_document(document: MinimalDidDocument, kid: str) -
     `key_from_document` remains correct for this module's own Agent Card key resolution, which
     has no such relationship requirement to begin with.
     """
+    if document.deactivated:
+        _fail("did_deactivated")
 
     def _entry_id(entry: Union[str, MinimalVerificationMethod]) -> str:
         if isinstance(entry, str):

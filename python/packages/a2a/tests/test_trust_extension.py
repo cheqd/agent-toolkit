@@ -288,3 +288,18 @@ async def test_the_cache_is_bounded_distinct_canonical_dids_beyond_max_entries_e
         await cache.get(f"did:example:caller-{i}", TrustExtensionActivation(status_check="required"))
         assert cache.size() <= 3, f"size {cache.size()} exceeded max_entries after caller-{i}"
     assert cache.size() == 3
+
+
+async def test_a_deactivated_anchored_did_fails_linkage_as_deactivated_even_when_reciprocal():
+    docs = {
+        CANONICAL: LinkageDidDocument(id=CANONICAL, also_known_as=[ANCHORED]),
+        ANCHORED: LinkageDidDocument(id=ANCHORED, also_known_as=[CANONICAL], deactivated=True),
+    }
+
+    async def resolve_did_document(did):
+        return docs.get(did)
+
+    deps = TrustExtensionDeps(resolve_did_document=resolve_did_document, manifest_cache=FakeManifestCache())
+    result = await verify_trust_extension(CANONICAL, TrustExtensionActivation(anchored_did=ANCHORED), deps)
+    assert result.ok is False
+    assert list(result.reasons) == ["linkage_did_deactivated"]
