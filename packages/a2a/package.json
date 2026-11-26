@@ -1,7 +1,6 @@
 {
   "name": "@cheqd/agent-identity-a2a",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.2.0-beta",
   "description": "DRAFT — A2A trust binding gate and interceptor. Early exploration, not reviewed or stable.",
   "license": "Apache-2.0",
   "type": "module",
@@ -18,7 +17,7 @@
   ],
   "dependencies": {
     "@a2a-js/sdk": "1.3.0",
-    "@cheqd/agent-identity": "0.0.0",
+    "@cheqd/agent-identity": "0.2.0-beta",
     "@kya-os/mcp": "1.23.0"
   },
   "publishConfig": {

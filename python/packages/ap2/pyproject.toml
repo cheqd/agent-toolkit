@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cheqd-agent-identity-ap2"
-version = "0.0.0"
+version = "0.2.0b0"
 description = "DRAFT — AP2 binding: open mandate chain verification, cnf key continuity, secondary payment keys. Python port."
 authors = []
 license = "Apache-2.0"

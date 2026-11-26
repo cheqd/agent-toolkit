@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cheqd-agent-identity"
-version = "0.0.0"
+version = "0.2.0b0"
 description = "DRAFT — shared identity core. Early exploration, not reviewed or stable. Python port of @cheqd/agent-identity."
 authors = []
 license = "Apache-2.0"

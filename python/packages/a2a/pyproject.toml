@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cheqd-agent-identity-a2a"
-version = "0.0.0"
+version = "0.2.0b0"
 description = "DRAFT — A2A trust binding: covered-request canonicalisation, the trust extension, and a from-spec org.kya-os/proof.v1 holder-of-key proof engine. Python port - partial, see docs/design-decisions.md D12/D13."
 authors = []
 license = "Apache-2.0"
