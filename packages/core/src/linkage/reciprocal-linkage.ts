@@ -19,6 +19,8 @@
 export interface LinkageDidDocument {
 	readonly id: string;
 	readonly alsoKnownAs?: readonly string[];
+	/** Set by `createDidCheqdResolver` for a deactivated DID; a deactivated DID links nothing. */
+	readonly deactivated?: boolean;
 }
 
 export type ReciprocalLinkageResult =

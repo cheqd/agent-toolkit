@@ -140,6 +140,8 @@ async def verify_trust_extension(
             # documents against each other, never against what was actually requested - would
             # be none the wiser.
             reasons.append("linkage_resolved_doc_id_mismatch")
+        elif getattr(canonical_doc, "deactivated", False) or getattr(anchored_doc, "deactivated", False):
+            reasons.append("linkage_did_deactivated")
         else:
             linkage = verify_reciprocal_linkage(canonical_doc, anchored_doc)
             if not linkage.ok:

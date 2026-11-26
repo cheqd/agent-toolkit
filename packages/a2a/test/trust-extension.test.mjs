@@ -395,3 +395,16 @@ test('a trustConfigRef pointing at a DID other than canonicalDid fails closed wh
 	assert.ok(result.reasons.includes('manifest_did_mismatch'));
 	assert.equal(called, false);
 });
+
+test('a deactivated anchored DID fails linkage as deactivated, even when the linkage is reciprocal', async () => {
+	const docs = {
+		[CANONICAL]: { id: CANONICAL, alsoKnownAs: [ANCHORED] },
+		[ANCHORED]: { id: ANCHORED, alsoKnownAs: [CANONICAL], deactivated: true },
+	};
+	const deps = {
+		resolveDidDocument: async (did) => docs[did] ?? null,
+		manifestCache: { get: async () => ({ ok: true }), clear() {} },
+	};
+	const result = await verifyTrustExtension(CANONICAL, { anchoredDid: ANCHORED }, deps);
+	assert.deepEqual(result, { ok: false, reasons: ['linkage_did_deactivated'] });
+});

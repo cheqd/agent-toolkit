@@ -56,7 +56,14 @@ export function createCheqdStatusChecker(options: CheqdStatusCheckerOptions): Bi
 		// published type. @kya-os/mcp 1.23.0+ verifies only a key `assertionMethod` lists - a
 		// document that omits it entirely is treated as listing none, so every resolver this
 		// option is given MUST state `assertionMethod` for its signing key(s).
-		didResolver: { resolve: (did: string) => options.resolveDidCheqd(did) } as never,
+		// @kya-os/mcp reads keys off the document itself, past `assertionMethodKeyFromDocument`, so
+		// a deactivated issuer is withheld here: its status lists must not verify.
+		didResolver: {
+			resolve: async (did: string) => {
+				const document = await options.resolveDidCheqd(did);
+				return document?.deactivated === true ? null : document;
+			},
+		} as never,
 	});
 	return createRevocationChecker({
 		fetch: options.fetch,
