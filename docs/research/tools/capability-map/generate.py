@@ -25,11 +25,11 @@ import html
 COL={'A2A':'#2f7fd1','KYA-OS':'#e0782a','AP2':'#2e9e6b','x402':'#8a56c2','MPP':'#c2398a','L402':'#b8960b','cheqd':'#1b8a8a',
      'ACP':'#6b7a8f','TAP':'#6b7a8f','KYAPay':'#c4572d','Baselayer':'#6b7a8f','MCP':'#2f7fd1',
      'UCP':'#8c5a2b','PAP':'#4f46e5','ANS':'#0f7fa6','WebBotAuth':'#7a4a2a','x401':'#b3261e',
-     'ERC8004':'#37474f','VI':'#a0522d','AGNTCY':'#00695c','SPT':'#635bff',
+     'ERC8004':'#37474f','VI':'#a0522d','AGNTCY':'#00695c','SPT':'#635bff','AMEX':'#016fd0',
      'VC2':'#5f6b7a','SDJWT':'#5f6b7a','OID4VC':'#5f6b7a','BSL':'#5f6b7a','vLEI':'#5f6b7a','RFC9421':'#5f6b7a','DPoP':'#5f6b7a',
      'RFC8693':'#5f6b7a','RAR':'#5f6b7a','SCITT':'#5f6b7a','SSF':'#5f6b7a','OTel':'#5f6b7a'}
 LABEL={'WebBotAuth':'Web Bot Auth','PAP':'PAP (Poppy)','ERC8004':'ERC-8004 (draft)','VI':'Verifiable Intent (draft)',
-       'AGNTCY':'AGNTCY','SPT':'Stripe SPT','VC2':'W3C VC 2.0','SDJWT':'SD-JWT / SD-JWT VC',
+       'AGNTCY':'AGNTCY','SPT':'Stripe SPT','AMEX':'Amex Intent Intelligence','VC2':'W3C VC 2.0','SDJWT':'SD-JWT / SD-JWT VC',
        'OID4VC':'OpenID4VCI/VP','BSL':'Bitstring Status List','vLEI':'GLEIF vLEI','RFC9421':'RFC 9421','DPoP':'RFC 9449 DPoP',
        'RFC8693':'RFC 8693','RAR':'RFC 9396','SCITT':'SCITT (RFC 9943)','SSF':'OpenID SSF/CAEP','OTel':'OTel GenAI (dev)'}
 # Protocols whose ratings are provisional (rated from announcements, not the specification text).
@@ -37,16 +37,20 @@ LABEL={'WebBotAuth':'Web Bot Auth','PAP':'PAP (Poppy)','ERC8004':'ERC-8004 (draf
 # (github.com/proof/x401, key sections read). Both are drafts and can change incompatibly.
 # Their chips render dashed, and a box owned only by provisional protocols gets a dotted border.
 PROVISIONAL=set()
+# Protocols with no public repository or package (adoption metrics table in PROTOCOLS.md: Baselayer KYA,
+# Stripe SPT and Amex Intent Intelligence are all closed/proprietary with nothing on GitHub, npm, PyPI or
+# crates.io). Flagged with an asterisk in the legend.
+NO_REPO={'Baselayer','SPT','AMEX'}
 # (name, [(proto, level)], note)  level: F full, P partial
 def cap(name, owners, gap=False, plain=False): return dict(name=name, owners=owners, gap=gap, plain=plain)  # plain: not rivals, never coloured as overlap
 ROWS=[
  ("Payment", [
    ("Payment authority", [
-     cap("Mandate authorisation",[('AP2','F'),('ACP','P'),('TAP','P'),('UCP','P'),('VI','P'),('SPT','P')]),
-     cap("Spend limits and constraints",[('AP2','F'),('VI','F'),('SPT','P')]),
-     cap("Receipts and dispute evidence",[('AP2','F')]),
+     cap("Mandate authorisation",[('AP2','F'),('ACP','P'),('TAP','P'),('UCP','P'),('VI','P'),('SPT','P'),('AMEX','P')]),
+     cap("Spend limits and constraints",[('AP2','F'),('VI','F'),('SPT','P'),('AMEX','P')]),
+     cap("Receipts and dispute evidence",[('AP2','F'),('AMEX','P')]),
      cap("Binding the decision to the payment",[('VI','F'),('UCP','P')]),
-     cap("Delegated payment credential",[('SPT','F'),('ACP','P'),('UCP','P')])]),
+     cap("Delegated payment credential",[('SPT','F'),('ACP','P'),('UCP','P'),('AMEX','P')])]),
    ("Payment wire and settlement", [
      cap("HTTP-native payment request",[('x402','F'),('MPP','F'),('L402','F')]),
      cap("Session and streaming payments",[('MPP','F')]),
@@ -159,7 +163,9 @@ rows=''
 for rname, groups in ROWS:
     g=''.join(f'<div class="grp"><div class="gt">{html.escape(gn)}</div><div class="caps">{"".join(box(c) for c in cs)}</div></div>' for gn,cs in groups)
     rows+=f'<div class="row"><div class="rl">{html.escape(rname)}</div><div class="groups">{g}</div></div>'
-legend=''.join(f'<span class="chip" style="--c:{COL[p]}">{LABEL.get(p,p)}</span>' for p in ['A2A','MCP','KYA-OS','KYAPay','ANS','WebBotAuth','AP2','x402','MPP','L402','x401','PAP','UCP','ERC8004','VI','AGNTCY','SPT','cheqd'] if p in COL)+'<span class="chip" style="--c:#6b7a8f">ACP / TAP / Baselayer</span>'+'<span class="chip" style="--c:#5f6b7a">Shared standards row (RFCs, W3C, IETF, OpenID)</span>'+''
+def _leg_label(p): return LABEL.get(p,p)+(' *' if p in NO_REPO else '')
+legend=''.join(f'<span class="chip" style="--c:{COL[p]}">{html.escape(_leg_label(p))}</span>' for p in ['A2A','MCP','KYA-OS','KYAPay','ANS','WebBotAuth','AP2','x402','MPP','L402','x401','PAP','UCP','ERC8004','VI','AGNTCY','SPT','AMEX','cheqd'] if p in COL)+'<span class="chip" style="--c:#6b7a8f">ACP / TAP / Baselayer *</span>'+'<span class="chip" style="--c:#5f6b7a">Shared standards row (RFCs, W3C, IETF, OpenID)</span>'+''
+NO_REPO_NOTE='<div class="leg-note">* no public repository or package found (Baselayer KYA and Amex Intent Intelligence are closed/proprietary; Stripe SPT and the Amex framework ship only inside their own vendor SDKs or developer kits). Applies only to Baselayer within the ACP / TAP / Baselayer chip — ACP and TAP each have a public repo.</div>'
 PROV_KEY='<span class="k" style="background:#ebe9fb;border:3px dotted #4f46e5"></span>provisional (dashed chip = provisional protocol)' if PROVISIONAL else ''
 page=f'''<!doctype html><meta charset=utf-8><style>
 body{{margin:0;padding:24px;background:#fff;font-family:Helvetica,Arial,'DejaVu Sans',sans-serif;color:#222;width:1560px}}
@@ -184,16 +190,18 @@ h1{{font-size:20px;margin:0 0 4px}} .sub{{font-size:12px;color:#555;margin-botto
 .cap.prov{{border-style:dotted;border-color:#4f46e5;border-width:3px;background:#ebe9fb}}
 .leg{{margin-top:14px;font-size:11px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}}
 .k{{display:inline-block;width:14px;height:14px;border-radius:3px;margin:0 3px 0 10px;vertical-align:middle}}
+.leg-note{{margin-top:6px;font-size:11px;color:#555}}
 </style>
 <h1>{html.escape(TITLE)}</h1>
-<div class="sub">Which protocol owns each capability. Red = two or more full owners (overlap). Amber = one owner plus partial coverage. Dashed = gap. Filled chip = owns, outlined chip with <span class=h>◐</span> = partial. Author's assessment, October 2026. Updated 19 Oct 2026: UCP re-read from its specification (catalogue, cart and fulfilment, order and handoff boxes); ERC-8004, Verifiable Intent, AGNTCY and Stripe SPT added; MCP authorisation, including ID-JAG, folded into the MCP column; a Shared standards row added, with general RFCs and W3C, IETF and OpenID specifications grouped into three boxes (not protocols, so never coloured as overlap); payment-protocol details are from secondary sources. PAP (Personal Agent Protocol, nicknamed Poppy, draft 0.1) and x401 (Proof, draft 0.2.0) are rated from their specification drafts, which can change incompatibly. UCP is rated from its specification (release v2026-08-25).</div>
+<div class="sub">Which protocol owns each capability. Red = two or more full owners (overlap). Amber = one owner plus partial coverage. Dashed = gap. Filled chip = owns, outlined chip with <span class=h>◐</span> = partial. Author's assessment, October 2026. Updated 19 Oct 2026: UCP re-read from its specification (catalogue, cart and fulfilment, order and handoff boxes); ERC-8004, Verifiable Intent, AGNTCY and Stripe SPT added; MCP authorisation, including ID-JAG, folded into the MCP column; a Shared standards row added, with general RFCs and W3C, IETF and OpenID specifications grouped into three boxes (not protocols, so never coloured as overlap); payment-protocol details are from secondary sources. PAP (Personal Agent Protocol, nicknamed Poppy, draft 0.1) and x401 (Proof, draft 0.2.0) are rated from their specification drafts, which can change incompatibly. UCP is rated from its specification (release v2026-08-25). Updated 30 Oct 2026: American Express's Intent Intelligence framework added (announced 13 Oct 2026, part of the ACE Developer Kit), rated partial throughout from press coverage only — no specification or public repository was found and Amex confirmed no live integrations at launch.</div>
 {rows}
 <div class="leg">{legend}
 <span class="k" style="background:#fde3d0;border:3px solid #d32f2f"></span>overlap (two or more full owners)
 <span class="k" style="background:#fff1d6;border:3px solid #e69500"></span>one owner plus partial coverage
 <span class="k" style="background:#f5dc9c;border:2px solid #444"></span>single owner
 <span class="k" style="background:#eee;border:2px dashed #888"></span>gap (no owner)
-{PROV_KEY}</div>'''
+{PROV_KEY}</div>
+{NO_REPO_NOTE}'''
 out=sys.argv[1] if len(sys.argv)>1 else 'capability-map.html'
 open(out,'w').write(page)
 print({k:len(v) for k,v in stats.items()})

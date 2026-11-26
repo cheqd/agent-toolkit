@@ -47,7 +47,8 @@ text{{font-family:{FONT};fill:var(--ink2)}}
 NOT_PUBLIC = 'Closed commercial product: no public repository or package'
 # Protocols with no public repository or package, charted as dashed no-data entries.
 NO_REPO = [('Baselayer KYA', 'Closed commercial product: no public repository or package', 'closed product, no public repo'),
-           ('Stripe SPT', "Proprietary API: no public repository; delivered through Stripe's general SDKs", 'proprietary API, no public repo')]
+           ('Stripe SPT', "Proprietary API: no public repository; delivered through Stripe's general SDKs", 'proprietary API, no public repo'),
+           ('Amex Intent Intelligence', 'Proprietary framework, part of the ACE Developer Kit: no specification or public repository found', 'proprietary, no public repo')]
 NO_REPO_LINES = [f'{n}: {why[0].lower() + why[1:]}.' for n, why, _ in NO_REPO]
 NO_REPO_NAMES = ', '.join(n for n, _, _ in NO_REPO)
 NO_REPO_SHORT = {n: s for n, _, s in NO_REPO}
@@ -160,7 +161,7 @@ def nudge(ys, gap):
 
 
 # ---------------------------------------------------------------- chart 1: npm downloads over time
-def chart_npm():
+def chart_npm(notes=True):
     names = ['MCP', 'A2A', 'x402', 'MPP', 'Web Bot Auth', 'UCP', 'KYA-OS', 'x401']
     W = 960
     L, R, T = 64, 190, 112
@@ -182,7 +183,7 @@ def chart_npm():
              [f'{p}: {why}.' for p, why in D['downloads']['no_package'].items()]),
             ('Not measured', ['Third-party packages and other registries (PyPI, crates.io) are in the all-registries chart. Maven, NuGet and Go modules are not measured.'])]
     hbox = nc_height(secs)
-    H = T + ph + 40 + hbox + 22 + 28 + 10 + 28 + 14
+    H = T + ph + 40 + (hbox + 22 + 28 + 10 + 28 + 14 if notes else 20)
     pw = W - L - R
     d0 = dt.date(2025, 4, 21)
     d1 = dt.date(2026, 10, 5)
@@ -231,14 +232,15 @@ def chart_npm():
         b.append(f'<path d="M{x+3:.1f},{y:.1f} L{lxp-3},{y2:.1f}" style="stroke:var(--s{i+1});stroke-width:1;fill:none"/>'
                  f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.5" style="fill:var(--s{i+1});stroke:var(--surface);stroke-width:2"/>'
                  f'<text class="lab" x="{lxp}" y="{y2+4:.1f}">{esc(n)} <tspan class="val">{fmt(v)}</tspan></text>')
-    ny = T + ph + 40
-    b.append(nc_box(L, ny, pw + R - 24, secs))
-    b.append(foot(L, ny + hbox + 22, ['One package per protocol is plotted. The window opens 21 Apr 2025, so earlier history for MCP, x402 and Web Bot Auth is not shown.',
-                                       'Each line starts at the first week with downloads.']))
-    half = len(names) // 2
-    for k, grp in enumerate((names[:half], names[half:])):
-        pkgs = '; '.join(f'{n}: {D["npm"][n]["pkg"]}' for n in grp)
-        b.append(f'<text class="ax" x="{L}" y="{ny+hbox+22+38+k*14}">{"Packages: " if k == 0 else ""}{esc(pkgs)}</text>')
+    if notes:
+        ny = T + ph + 40
+        b.append(nc_box(L, ny, pw + R - 24, secs))
+        b.append(foot(L, ny + hbox + 22, ['One package per protocol is plotted. The window opens 21 Apr 2025, so earlier history for MCP, x402 and Web Bot Auth is not shown.',
+                                           'Each line starts at the first week with downloads.']))
+        half = len(names) // 2
+        for k, grp in enumerate((names[:half], names[half:])):
+            pkgs = '; '.join(f'{n}: {D["npm"][n]["pkg"]}' for n in grp)
+            b.append(f'<text class="ax" x="{L}" y="{ny+hbox+22+38+k*14}">{"Packages: " if k == 0 else ""}{esc(pkgs)}</text>')
     return svg(W, H, ''.join(b), 'Weekly npm downloads of each protocol main SDK',
                'Line chart on a log scale. ' + '; '.join(f'{n} {fmt(D["npm"][n]["weeks"][-1][1])} a week' for n in names))
 
@@ -276,7 +278,7 @@ def legend_row(x, y, items):
     return ''.join(out)
 
 
-def chart_commits():
+def chart_commits(notes=True):
     series = commit_series()
     items = sorted(series.items(), key=lambda kv: -(sum(kv[1]['off']) + sum(kv[1]['tp'] or [])))
     items += [(n, None) for n, _, _ in NO_REPO]  # no public repository
@@ -307,7 +309,7 @@ def chart_commits():
             ('Not added', ([f'{", ".join(gaps)}: GitHub returned no commit statistics for these.'] if gaps else []) +
              ['Default branch only. Forks, other branches and private repositories are not counted.'])]
     hbox = nc_height(secs)
-    H = T + rows * (ph + gy) + 14 + hbox + 24
+    H = T + rows * (ph + gy) + 14 + (hbox + 24 if notes else 10)
     ymax = max(max(sr['off'] + (sr['tp'] or [0])) for _, sr in items if sr)
     ymax = int(math.ceil(ymax / 10.0) * 10)
     b = [f'<text class="t" x="{L}" y="30">Weekly commits to each protocol: official and third-party repositories</text>',
@@ -361,7 +363,8 @@ def chart_commits():
             else:
                 msg = f'{n}: {sr["off"][i]} official' + (f', {sr["tp"][i]} third-party' if sr['tp'] is not None else '') + f' commits, week of {day}'
             b.append(f'<rect class="hit" x="{px(i)-pw/n_w/2:.1f}" y="{y0}" width="{pw/n_w:.1f}" height="{ph}"><title>{esc(msg)}</title></rect>')
-    b.append(nc_box(L, T + rows * (ph + gy) + 14, W - 2 * L, secs))
+    if notes:
+        b.append(nc_box(L, T + rows * (ph + gy) + 14, W - 2 * L, secs))
     return svg(W, H, ''.join(b), 'Weekly commits to each protocol: official and third-party repositories',
                'Small multiples, one panel per protocol, shared scale, official and third-party lines. ' +
                '; '.join(f'{n} {sum(sr["off"])} official' + (f' and {sum(sr["tp"])} third-party' if sr['tp'] is not None else '') + ' commits' for n, sr in items if sr) +
@@ -369,7 +372,7 @@ def chart_commits():
 
 
 # ---------------------------------------------------------------- chart 2b: weekly downloads, official vs third-party
-def chart_downloads():
+def chart_downloads(notes=True):
     DL = D['downloads']
     starts = [dt.date.fromisoformat(x) for x in DL['week_starts']]
     n_w = len(starts)
@@ -414,7 +417,7 @@ def chart_downloads():
                               '(GitHub repositories tagged with each protocol topic: ' + topics + ').',
                               'Each registry gives a different history, so every panel covers the same 12 weeks.'])]
     hbox = nc_height(secs)
-    H = T + nrows * (ph + gy) + 14 + hbox + 24
+    H = T + nrows * (ph + gy) + 14 + (hbox + 24 if notes else 10)
     first, last = starts[0], starts[-1] + dt.timedelta(days=6)
     ymax_all = None
     b = [f'<text class="t" x="{L}" y="30">Weekly package downloads for each protocol: official and third-party packages</text>',
@@ -473,7 +476,8 @@ def chart_downloads():
                  f'<rect class="nd" x="{x0}" y="{y0}" width="{pw}" height="{ph}" rx="4"/>'
                  f'<text class="ndt" x="{x0+pw/2}" y="{y0+ph/2-3}" text-anchor="middle">No data</text>'
                  f'<text class="ndt" x="{x0+pw/2}" y="{y0+ph/2+12}" text-anchor="middle">{esc(why)}</text>')
-    b.append(nc_box(L, T + nrows * (ph + gy) + 14, W - 2 * L, secs))
+    if notes:
+        b.append(nc_box(L, T + nrows * (ph + gy) + 14, W - 2 * L, secs))
     return svg(W, H, ''.join(b), 'Weekly package downloads for each protocol: official and third-party packages',
                'Small multiples, one panel per protocol. ' + '; '.join(
                    f'{p} {fmt((off or [0])[-1])} official and {fmt((tp or [0])[-1])} third-party in the latest week' for p, _, off, tp in rows_) +
@@ -481,7 +485,7 @@ def chart_downloads():
 
 
 # ---------------------------------------------------------------- chart 3: stars snapshot dot plot
-def chart_stars():
+def chart_stars(notes=True):
     items = sorted(D['repos'].items(), key=lambda kv: -kv[1]['stars'])
     items += [(n, None) for n, _, _ in NO_REPO]  # no public repository
     quiet = {n for n, wk in D['commits'].items() if sum(v for _, v in wk[-13:]) == 0}
@@ -494,7 +498,7 @@ def chart_stars():
             ('Repositories tagged with each protocol topic, applications included',
              wrap(', '.join(f'{p} {c:,}' for p, (t, c) in D.get('topics', {}).items())))]
     hbox = nc_height(secs)
-    H = T + len(items) * rh + 40 + 14 * (len(PROXY) + 1) + 16 + hbox + 24
+    H = T + len(items) * rh + 40 + 14 * (len(PROXY) + 1) + 16 + (hbox + 24 if notes else 10)
     pw = W - L - R
     lo, hi = 0.7, 5  # 5 .. 100K
 
@@ -523,7 +527,8 @@ def chart_stars():
                  f'<text class="val" x="{X(r["stars"])+12:.1f}" y="{y+4:.1f}">{r["stars"]:,}  ·  created {dt.date.fromisoformat(r["created"]).strftime("%b %Y")}</text>')
     b.append(foot(L-110, T + len(items) * rh + 40, ['* Charted repository is an SDK or implementation, not the specification:'] +
                   [f'   {k}: {v}' for k, v in PROXY.items()]))
-    b.append(nc_box(L - 110, T + len(items) * rh + 40 + 14 * (len(PROXY) + 1) + 16, W - 2 * (L - 110), secs))
+    if notes:
+        b.append(nc_box(L - 110, T + len(items) * rh + 40 + 14 * (len(PROXY) + 1) + 16, W - 2 * (L - 110), secs))
     return svg(W, H, ''.join(b), 'GitHub stars on each protocol main repository',
                'Dot plot on a log scale. ' + '; '.join(f'{n} {r["stars"]:,}' for n, r in items if r) + '; no data for ' + NO_REPO_NAMES)
 
@@ -532,3 +537,6 @@ if __name__ == '__main__':
     for name, fn in [('npm-downloads.svg', chart_npm), ('downloads-all-registries.svg', chart_downloads), ('commit-activity.svg', chart_commits), ('github-stars.svg', chart_stars)]:
         open(os.path.join(HERE, name), 'w').write(fn())
         print('wrote', name)
+        no_notes_name = name.replace('.svg', '-no-notes.svg')
+        open(os.path.join(HERE, no_notes_name), 'w').write(fn(notes=False))
+        print('wrote', no_notes_name)
