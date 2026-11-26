@@ -1,7 +1,6 @@
 {
   "name": "@cheqd/agent-identity",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.2.0-beta",
   "description": "DRAFT — shared identity core. Early exploration, not reviewed or stable.",
   "license": "Apache-2.0",
   "type": "module",
